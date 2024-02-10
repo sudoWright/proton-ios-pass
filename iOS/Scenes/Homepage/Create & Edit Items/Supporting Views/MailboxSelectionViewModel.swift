@@ -21,26 +21,22 @@
 import Client
 import Combine
 import Core
+import Entities
 import Factory
 import SwiftUI
 
-protocol MailboxSelectionViewModelDelegate: AnyObject {
-    func mailboxSelectionViewModelWantsToUpgrade()
-    func mailboxSelectionViewModelDidEncounter(error: Error)
-}
-
+@MainActor
 final class MailboxSelectionViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
     @Published private(set) var shouldUpgrade = false
 
-    private let logger = resolve(\SharedToolingContainer.logger)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
     let mailboxSelection: MailboxSelection
     let mode: Mode
     let titleMode: MailboxSection.Mode
 
     private var cancellables = Set<AnyCancellable>()
-    weak var delegate: MailboxSelectionViewModelDelegate?
 
     enum Mode {
         case createEditAlias
@@ -49,9 +45,9 @@ final class MailboxSelectionViewModel: ObservableObject, DeinitPrintable {
         var tintColor: Color {
             switch self {
             case .createEditAlias:
-                return Color(uiColor: ItemContentType.alias.normMajor2Color)
+                Color(uiColor: ItemContentType.alias.normMajor2Color)
             case .createAliasLite:
-                return Color(uiColor: ItemContentType.login.normMajor2Color)
+                Color(uiColor: ItemContentType.login.normMajor2Color)
             }
         }
     }
@@ -67,6 +63,6 @@ final class MailboxSelectionViewModel: ObservableObject, DeinitPrintable {
     }
 
     func upgrade() {
-        delegate?.mailboxSelectionViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
     }
 }

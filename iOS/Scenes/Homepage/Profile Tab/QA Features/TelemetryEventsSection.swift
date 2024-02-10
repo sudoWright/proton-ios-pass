@@ -19,14 +19,15 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 struct TelemetryEventsSection: View {
     var body: some View {
         NavigationLink(destination: { TelemetryEventsView() },
-                       label: { Text("Telemetry events") })
+                       label: { Text(verbatim: "Telemetry events") })
     }
 }
 
@@ -42,9 +43,10 @@ private struct TelemetryEventUiModel: Identifiable {
     }
 }
 
+@MainActor
 private final class TelemetryEventsViewModel: ObservableObject {
     private let telemetryEventRepository = resolve(\SharedRepositoryContainer.telemetryEventRepository)
-    private let userData = resolve(\SharedDataContainer.userData)
+    private let userDataProvider = resolve(\SharedDataContainer.userDataProvider)
 
     @Published private(set) var uiModels = [TelemetryEventUiModel]()
     @Published private(set) var relativeThreshold = ""
@@ -59,13 +61,12 @@ private final class TelemetryEventsViewModel: ObservableObject {
             guard let self else { return }
             do {
                 let formatter = RelativeDateTimeFormatter()
-                if let threshold = self.telemetryEventRepository.scheduler.threshhold {
+                if let threshold = await self.telemetryEventRepository.scheduler.getThreshold() {
                     let relativeDate = formatter.localizedString(for: threshold, relativeTo: .now)
                     self.relativeThreshold = "Next batch \(relativeDate)"
                 }
-                let userId = self.userData.user.ID
-                let events =
-                    try await self.telemetryEventRepository.localDatasource.getAllEvents(userId: userId)
+                let userId = try userDataProvider.getUserId()
+                let events = try await self.telemetryEventRepository.getAllEvents(userId: userId)
                 // Reverse to move new events to the top of the list
                 self.uiModels = events.reversed().map { TelemetryEventUiModel(event: $0,
                                                                               formatter: formatter) }
@@ -86,7 +87,7 @@ private struct TelemetryEventsView: View {
         } else {
             if viewModel.uiModels.isEmpty {
                 Form {
-                    Text("No events")
+                    Text(verbatim: "No events")
                         .foregroundColor(Color(uiColor: PassColor.textWeak))
                 }
             } else {
@@ -102,7 +103,7 @@ private struct TelemetryEventsView: View {
                     EventView(uiModel: uiModel)
                 }
             }, header: {
-                Text("\(viewModel.uiModels.count) pending event(s)")
+                Text(verbatim: "\(viewModel.uiModels.count) pending event(s)")
             })
         }
         .navigationTitle(viewModel.relativeThreshold)
@@ -136,76 +137,87 @@ private extension TelemetryEventType {
     var icon: UIImage {
         switch self {
         case let .create(type):
-            return type.regularIcon
+            type.regularIcon
         case let .read(type):
-            return type.regularIcon
+            type.regularIcon
         case let .update(type):
-            return type.regularIcon
+            type.regularIcon
         case let .delete(type):
-            return type.regularIcon
+            type.regularIcon
         case .autofillDisplay, .autofillTriggeredFromApp, .autofillTriggeredFromSource:
             // swiftlint:disable:next force_unwrapping
-            return UIImage(systemName: "rectangle.and.pencil.and.ellipsis")!
+            UIImage(systemName: "rectangle.and.pencil.and.ellipsis")!
         case .searchClick, .searchTriggered:
             // swiftlint:disable:next force_unwrapping
-            return UIImage(systemName: "magnifyingglass")!
+            UIImage(systemName: "magnifyingglass")!
+        case .twoFaCreation, .twoFaUpdate:
+            // swiftlint:disable:next force_unwrapping
+            UIImage(systemName: "2.circle")!
         }
     }
 
     var iconColor: UIColor {
         switch self {
         case let .create(type):
-            return type.normMajor1Color
+            type.normMajor1Color
         case let .read(type):
-            return type.normMajor1Color
+            type.normMajor1Color
         case let .update(type):
-            return type.normMajor1Color
+            type.normMajor1Color
         case let .delete(type):
-            return type.normMajor1Color
+            type.normMajor1Color
         case .autofillDisplay, .autofillTriggeredFromApp, .autofillTriggeredFromSource:
-            return PassColor.signalInfo
+            PassColor.signalInfo
         case .searchClick, .searchTriggered:
-            return PassColor.signalDanger
+            PassColor.signalDanger
+        case .twoFaCreation, .twoFaUpdate:
+            ItemContentType.login.normMajor1Color
         }
     }
 
     var backgroundColor: UIColor {
         switch self {
         case let .create(type):
-            return type.normMinor1Color
+            type.normMinor1Color
         case let .read(type):
-            return type.normMinor1Color
+            type.normMinor1Color
         case let .update(type):
-            return type.normMinor1Color
+            type.normMinor1Color
         case let .delete(type):
-            return type.normMinor1Color
+            type.normMinor1Color
         case .autofillDisplay, .autofillTriggeredFromApp, .autofillTriggeredFromSource:
-            return PassColor.signalInfo.withAlphaComponent(0.16)
+            PassColor.signalInfo.withAlphaComponent(0.16)
         case .searchClick, .searchTriggered:
-            return PassColor.signalDanger.withAlphaComponent(0.16)
+            PassColor.signalDanger.withAlphaComponent(0.16)
+        case .twoFaCreation, .twoFaUpdate:
+            ItemContentType.login.normMinor1Color
         }
     }
 
     var emoji: String {
         switch self {
         case .create:
-            return "Create ➕"
+            "Create ➕"
         case .read:
-            return "Read 🗒️"
+            "Read 🗒️"
         case .update:
-            return "Update ✏️"
+            "Update ✏️"
         case .delete:
-            return "Delete ❌"
+            "Delete ❌"
         case .autofillDisplay:
-            return "AutoFill extension opened 🔑"
+            "AutoFill extension opened 🔑"
         case .autofillTriggeredFromSource:
-            return "Autofilled from QuickType bar ⌨️"
+            "Autofilled from QuickType bar ⌨️"
         case .autofillTriggeredFromApp:
-            return "Autofilled from extension 📱"
+            "Autofilled from extension 📱"
         case .searchClick:
-            return "Pick search result 🔎"
+            "Pick search result 🔎"
         case .searchTriggered:
-            return "Open search 🔎"
+            "Open search 🔎"
+        case .twoFaCreation:
+            "Create 2FA"
+        case .twoFaUpdate:
+            "Update 2FA"
         }
     }
 }

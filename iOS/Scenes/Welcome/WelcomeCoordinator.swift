@@ -20,19 +20,22 @@
 
 import Client
 import Core
-import ProtonCore_Doh
-import ProtonCore_ForceUpgrade
-import ProtonCore_Login
-import ProtonCore_LoginUI
-import ProtonCore_Networking
-import ProtonCore_Services
-import UIComponents
+import DesignSystem
+import Macro
+import ProtonCoreDoh
+import ProtonCoreForceUpgrade
+import ProtonCoreLogin
+import ProtonCoreLoginUI
+import ProtonCoreNetworking
+import ProtonCoreServices
 import UIKit
 
+@MainActor
 protocol WelcomeCoordinatorDelegate: AnyObject {
     func welcomeCoordinator(didFinishWith loginData: LoginData)
 }
 
+@MainActor
 final class WelcomeCoordinator: DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -52,7 +55,7 @@ final class WelcomeCoordinator: DeinitPrintable {
 
     private func makeWelcomeViewController() -> UIViewController {
         let welcomeViewController =
-            WelcomeViewController(variant: .pass(.init(body: "Secure password manager and more")),
+            WelcomeViewController(variant: .pass(.init(body: #localized("Secure password manager and more"))),
                                   delegate: self,
                                   username: nil,
                                   signupAvailable: true)
@@ -75,39 +78,53 @@ final class WelcomeCoordinator: DeinitPrintable {
 
 // MARK: - WelcomeViewControllerDelegate
 
+extension LoginCustomizationOptions: @unchecked Sendable {}
+
 extension WelcomeCoordinator: WelcomeViewControllerDelegate {
-    func userWantsToLogIn(username: String?) {
+    nonisolated func userWantsToLogIn(username: String?) {
         let customization: LoginCustomizationOptions = .init(inAppTheme: { [weak self] in
-            self?.preferences.theme.inAppTheme ?? .default
+            guard let self else { return .default }
+            return preferences.theme.inAppTheme
         })
-        logInAndSignUp.presentLoginFlow(over: welcomeViewController,
-                                        customization: customization) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .dismissed:
-                break
-            case let .loggedIn(logInData):
-                self.handle(logInData: logInData)
-            case let .signedUp(logInData):
-                self.handle(logInData: logInData)
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            logInAndSignUp.presentLoginFlow(over: welcomeViewController,
+                                            customization: customization) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .dismissed:
+                    break
+                case let .loggedIn(logInData):
+                    handle(logInData: logInData)
+                case let .signedUp(logInData):
+                    handle(logInData: logInData)
+                }
             }
         }
     }
 
-    func userWantsToSignUp() {
+    nonisolated func userWantsToSignUp() {
         let customization: LoginCustomizationOptions = .init(inAppTheme: { [weak self] in
-            self?.preferences.theme.inAppTheme ?? .default
+            guard let self else { return .default }
+            return preferences.theme.inAppTheme
         })
-        logInAndSignUp.presentSignupFlow(over: welcomeViewController,
-                                         customization: customization) { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .dismissed:
-                break
-            case let .loggedIn(logInData):
-                self.handle(logInData: logInData)
-            case let .signedUp(logInData):
-                self.handle(logInData: logInData)
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            logInAndSignUp.presentSignupFlow(over: welcomeViewController,
+                                             customization: customization) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .dismissed:
+                    break
+                case let .loggedIn(logInData):
+                    handle(logInData: logInData)
+                case let .signedUp(logInData):
+                    handle(logInData: logInData)
+                }
             }
         }
     }

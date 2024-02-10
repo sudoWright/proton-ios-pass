@@ -20,10 +20,11 @@
 
 import Client
 import Core
+import DesignSystem
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 /// Note section of item detail pages
 struct NoteDetailSection: View {
@@ -34,10 +35,10 @@ struct NoteDetailSection: View {
 
     var body: some View {
         let tintColor = Color(uiColor: itemContent.type.normMajor2Color)
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.note, color: itemContent.type.normColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Note")
                     .sectionTitleText()
 
@@ -54,8 +55,7 @@ struct NoteDetailSection: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(kItemDetailSectionPadding)
-        .accentColor(tintColor) // Remove when iOS 15 is dropped
+        .padding(DesignConstant.sectionPadding)
         .tint(tintColor)
         .roundedDetailSection()
         .sheet(isPresented: $isShowingFullNote) {
@@ -66,7 +66,6 @@ struct NoteDetailSection: View {
 
 private struct FullNoteView: View {
     @Environment(\.dismiss) private var dismiss
-    private let favIconRepository = resolve(\SharedRepositoryContainer.favIconRepository)
     let itemContent: ItemContent
     let vault: Vault?
     let theme: Theme
@@ -76,7 +75,9 @@ private struct FullNoteView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading) {
-                    ItemDetailTitleView(itemContent: itemContent, vault: vault)
+                    ItemDetailTitleView(itemContent: itemContent,
+                                        vault: vault,
+                                        shouldShowVault: true)
                         .padding(.bottom)
                     Text("Note")
                         .sectionTitleText()
@@ -98,7 +99,6 @@ private struct FullNoteView: View {
             }
         }
         .navigationViewStyle(.stack)
-        .accentColor(tintColor) // Remove when iOS 15 is dropped
         .tint(tintColor)
         .theme(theme)
     }

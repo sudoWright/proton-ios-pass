@@ -20,9 +20,11 @@
 
 import Client
 import Core
+import Entities
+import Macro
 import SwiftUI
 
-struct CustomFieldUiModel: Identifiable, Equatable, Hashable {
+struct CustomFieldUiModel: Identifiable, Equatable, Hashable, Sendable {
     var id = UUID().uuidString
     var customField: CustomField
 }
@@ -36,11 +38,12 @@ extension CustomFieldUiModel {
     }
 }
 
+@MainActor
 protocol CustomFieldEditionDelegate: AnyObject {
     func customFieldEdited(_ uiModel: CustomFieldUiModel, newTitle: String)
-    func customFieldEdited(_ uiModel: CustomFieldUiModel, content: String)
 }
 
+@MainActor
 final class CustomFieldEditionCoordinator: DeinitPrintable, CustomCoordinator {
     deinit { print(deinitMessage) }
 
@@ -57,24 +60,23 @@ final class CustomFieldEditionCoordinator: DeinitPrintable, CustomCoordinator {
     }
 
     func start() {
-        let alert = UIAlertController(title: "Edit field title",
-                                      message: "Enter new title for \"\(uiModel.customField.title)\"",
+        let alert = UIAlertController(title: #localized("Edit field name"),
+                                      message: #localized("Enter new name for « %@ »", uiModel.customField.title),
                                       preferredStyle: .alert)
         alert.addTextField { textField in
-            textField.placeholder = "New field title"
             let action = UIAction { _ in
                 alert.actions.first?.isEnabled = textField.text?.isEmpty == false
             }
             textField.addAction(action, for: .editingChanged)
         }
 
-        let saveAction = UIAlertAction(title: "Save", style: .default) { [uiModel, delegate] _ in
+        let saveAction = UIAlertAction(title: #localized("Save"), style: .default) { [uiModel, delegate] _ in
             delegate.customFieldEdited(uiModel, newTitle: alert.textFields?.first?.text ?? "")
         }
         saveAction.isEnabled = false
         alert.addAction(saveAction)
 
-        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
+        let cancelAction = UIAlertAction(title: #localized("Cancel"), style: .cancel)
         alert.addAction(cancelAction)
         rootViewController.topMostViewController.present(alert, animated: true)
     }

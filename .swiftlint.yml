@@ -8,9 +8,13 @@
 included: # paths to include during linting. `--path` is ignored if present.
   - iOS
   - AutoFill
-  - Client
-  - Core
-  - UIComponents
+  - LocalPackages/Client/Sources
+  - LocalPackages/Core/Sources
+  - LocalPackages/DesignSystem/Sources
+  - LocalPackages/Entities/Sources
+  - LocalPackages/Macro/Sources
+  - LocalPackages/Screens/Sources
+  - LocalPackages/UseCases/Sources
   - Keyboard
   
 ################
@@ -22,9 +26,16 @@ excluded: # paths to ignore during linting. Takes precedence over `included`.
   - Protobuf Objects
   - iOSTests
   - iOSUITests
-  - CoreTests
-  - ClientTests
-  - UIComponentsTests
+  - LocalPackages/Core/Tests
+  - LocalPackages/Client/Tests
+  - LocalPackages/Client/Sources/ClientMocks
+  - LocalPackages/Core/Sources/CoreMocks
+  - LocalPackages/DesignSystem/Tests
+  - LocalPackages/Entities/Tests
+  - LocalPackages/Entities/Sources/Entities/Protobuf*
+  - LocalPackages/UseCases/Sources/UseCasesMocks
+  - fastlane/*
+  - misc/*
   
 ##############
 #Disabled rules#
@@ -68,7 +79,7 @@ opt_in_rules:
   - first_where
   - flatmap_over_map_reduce
   - force_unwrapping
-  - function_default_parameter_at_end
+#  - function_default_parameter_at_end
   - ibinspectable_in_extension
   - identical_operands
   - implicit_return
@@ -177,7 +188,7 @@ function_body_length: # Functions bodies should not span too many lines.
 type_name:
   min_length: 3 # only warning
   max_length: # warning and error
-    warning: 40
+    warning: 45
     error: 50
   excluded: iPhone # excluded via string
   allowed_symbols: ["_"] # these are allowed in type names
@@ -193,3 +204,18 @@ custom_rules:
     name: "Drop first one"
     message: "Implicitly drop first one element"
     regex: "(\\.dropFirst\\(1\\))"
+
+  discouraged_optional_self:
+    name: "Discouraged optional self"
+    message: "Unwrap self via guard let and use implicit self instead of optional self"
+    regex: "(self\\?\\.)"
+
+  discouraged_previewprovider:
+    name: "Discouraged PreviewProvider"
+    message: "Use #Preview macro insteaf of PreviewProvider"
+    regex: "(PreviewProvider)"
+
+  discouraged_anyview:
+    name: "Discouraged AnyView"
+    message: "Avoid using AnyView for better performance"
+    regex: "(AnyView)"

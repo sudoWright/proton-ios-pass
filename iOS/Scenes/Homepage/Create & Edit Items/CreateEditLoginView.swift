@@ -18,22 +18,22 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-// swiftlint:disable type_body_length
 import CodeScanner
 import Core
-import ProtonCore_UIFoundations
+import DesignSystem
+import Factory
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditLoginView: View {
+    private let theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CreateEditLoginViewModel
     @FocusState private var focusedField: Field?
     @State private var isShowingDiscardAlert = false
-    @State private var isShowingDeleteAliasAlert = false
     @Namespace private var usernameID
     @Namespace private var passwordID
-    @Namespace private var totpID
     @Namespace private var websitesID
     @Namespace private var noteID
     @Namespace private var bottomID
@@ -49,9 +49,9 @@ struct CreateEditLoginView: View {
         static func == (lhs: Field, rhs: Field) -> Bool {
             if case let .custom(lhsfield) = lhs,
                case let .custom(rhsfield) = rhs {
-                return lhsfield?.id == rhsfield?.id
+                lhsfield?.id == rhsfield?.id
             } else {
-                return lhs.hashValue == rhs.hashValue
+                lhs.hashValue == rhs.hashValue
             }
         }
     }
@@ -60,16 +60,16 @@ struct CreateEditLoginView: View {
         NavigationView {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: kItemDetailSectionPadding / 2) {
+                    LazyVStack(spacing: DesignConstant.sectionPadding / 2) {
                         CreateEditItemTitleSection(title: $viewModel.title,
                                                    focusedField: $focusedField,
                                                    field: .title,
                                                    selectedVault: viewModel.selectedVault,
                                                    itemContentType: viewModel.itemContentType(),
                                                    isEditMode: viewModel.mode.isEditMode,
-                                                   onChangeVault: viewModel.changeVault,
+                                                   onChangeVault: { viewModel.changeVault() },
                                                    onSubmit: { focusedField = .username })
-                            .padding(.bottom, kItemDetailSectionPadding / 2)
+                            .padding(.bottom, DesignConstant.sectionPadding / 2)
                         usernamePasswordTOTPSection
                         WebsiteSection(viewModel: viewModel,
                                        focusedField: $focusedField,
@@ -86,9 +86,9 @@ struct CreateEditLoginView: View {
                                                 contentType: .login,
                                                 uiModels: $viewModel.customFieldUiModels,
                                                 canAddMore: viewModel.canAddMoreCustomFields,
-                                                onAddMore: viewModel.addCustomField,
-                                                onEditTitle: viewModel.editCustomFieldTitle,
-                                                onUpgrade: viewModel.upgrade)
+                                                onAddMore: { viewModel.addCustomField() },
+                                                onEditTitle: { model in viewModel.editCustomFieldTitle(model) },
+                                                onUpgrade: { viewModel.upgrade() })
 
                         Spacer()
                             .id(bottomID)
@@ -96,6 +96,7 @@ struct CreateEditLoginView: View {
                     .padding()
                     .animation(.default, value: viewModel.customFieldUiModels.count)
                     .animation(.default, value: viewModel.canAddOrEdit2FAURI)
+                    .showSpinner(viewModel.loading)
                 }
                 .onChange(of: focusedField) { focusedField in
                     let id: Namespace.ID?
@@ -128,13 +129,7 @@ struct CreateEditLoginView: View {
             }
             .onFirstAppear {
                 if case .create = viewModel.mode {
-                    if #available(iOS 16, *) {
-                        focusedField = .title
-                    } else {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                            focusedField = .title
-                        }
-                    }
+                    focusedField = .title
                 }
             }
             .toolbar {
@@ -151,6 +146,7 @@ struct CreateEditLoginView: View {
                                           }
                                       },
                                       onUpgrade: { /* Not applicable */ },
+                                      onScan: { viewModel.openScanner() },
                                       onSave: {
                                           if viewModel.validateURLs() {
                                               viewModel.save()
@@ -159,54 +155,37 @@ struct CreateEditLoginView: View {
             }
             .toolbar { keyboardToolbar }
         }
-        .accentColor(Color(uiColor: viewModel.itemContentType().normMajor2Color)) // Remove when dropping iOS 15
-        .tint(Color(uiColor: viewModel.itemContentType().normMajor2Color))
+        .tint(viewModel.itemContentType().normMajor2Color.toColor)
         .navigationViewStyle(.stack)
+        .theme(theme)
         .obsoleteItemAlert(isPresented: $viewModel.isObsolete, onAction: dismiss.callAsFunction)
         .discardChangesAlert(isPresented: $isShowingDiscardAlert, onDiscard: dismiss.callAsFunction)
     }
+}
 
+private extension CreateEditLoginView {
     @ToolbarContentBuilder
-    private var keyboardToolbar: some ToolbarContent {
+    var keyboardToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .keyboard) {
-            if #available(iOS 16, *) {
-                switch focusedField {
-                case .username:
-                    usernameTextFieldToolbar
-                case .totp:
-                    totpTextFieldToolbar
-                case let .custom(model) where model?.customField.type == .totp:
-                    totpTextFieldToolbar
-                case .password:
-                    passwordTextFieldToolbar
-                default:
-                    EmptyView()
-                }
-            } else {
-                // Embed in a ZStack otherwise toolbars are rendered
-                // randomly in iOS 15
-                ZStack {
-                    switch focusedField {
-                    case .username:
-                        usernameTextFieldToolbar
-                    case .totp:
-                        totpTextFieldToolbar
-                    case let .custom(model) where model?.customField.type == .totp:
-                        totpTextFieldToolbar
-                    case .password:
-                        passwordTextFieldToolbar
-                    default:
-                        Button("") {}
-                    }
-                }
+            switch focusedField {
+            case .username:
+                usernameTextFieldToolbar
+            case .totp:
+                totpTextFieldToolbar
+            case let .custom(model) where model?.customField.type == .totp:
+                totpTextFieldToolbar
+            case .password:
+                passwordTextFieldToolbar
+            default:
+                EmptyView()
             }
         }
     }
 
-    private var usernameTextFieldToolbar: some View {
+    var usernameTextFieldToolbar: some View {
         ScrollView(.horizontal) {
             HStack {
-                Button(action: viewModel.generateAlias) {
+                Button { viewModel.generateAlias() } label: {
                     HStack {
                         toolbarIcon(uiImage: IconProvider.alias)
                         Text("Hide my email")
@@ -234,53 +213,67 @@ struct CreateEditLoginView: View {
         }
     }
 
-    private var totpTextFieldToolbar: some View {
-        HStack {
-            Button(action: viewModel.pasteTotpUriFromClipboard) {
-                HStack {
-                    toolbarIcon(uiImage: IconProvider.squares)
-                    Text("Paste from clipboard")
+    var totpTextFieldToolbar: some View {
+        ScrollView(.horizontal) {
+            HStack {
+                Button { viewModel.pasteTotpUriFromClipboard() } label: {
+                    HStack {
+                        toolbarIcon(uiImage: IconProvider.squares)
+                        Text("Paste from clipboard")
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .center)
 
-            PassDivider()
+                PassDivider()
 
-            Button(action: viewModel.openCodeScanner) {
-                HStack {
-                    toolbarIcon(uiImage: IconProvider.camera)
-                    Text("Open camera")
+                Button { viewModel.openCodeScanner() } label: {
+                    HStack {
+                        toolbarIcon(uiImage: IconProvider.camera)
+                        Text("Open camera")
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
+            .animationsDisabled() // Disable animation when switching between toolbars
         }
-        .animationsDisabled() // Disable animation when switching between toolbars
     }
 
-    private var passwordTextFieldToolbar: some View {
-        Button(action: viewModel.generatePassword) {
+    var passwordTextFieldToolbar: some View {
+        ScrollView(.horizontal) {
             HStack {
-                toolbarIcon(uiImage: IconProvider.arrowsRotate)
-                Text("Generate password")
+                Button { viewModel.pastePasswordFromClipboard() } label: {
+                    HStack {
+                        toolbarIcon(uiImage: IconProvider.squares)
+                        Text("Paste from clipboard")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+
+                PassDivider()
+
+                Button { viewModel.generatePassword() } label: {
+                    HStack {
+                        toolbarIcon(uiImage: IconProvider.arrowsRotate)
+                        Text("Generate password")
+                    }
+                }
             }
         }
         .animationsDisabled()
     }
 
-    private func toolbarIcon(uiImage: UIImage) -> some View {
+    func toolbarIcon(uiImage: UIImage) -> some View {
         Image(uiImage: uiImage)
             .resizable()
             .frame(width: 18, height: 18)
     }
+}
 
-    private var usernamePasswordTOTPSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
-            if viewModel.isAlias {
-                if viewModel.aliasCreationLiteInfo != nil {
-                    pendingAliasRow
-                } else {
-                    createdAliasRow
-                }
+private extension CreateEditLoginView {
+    var usernamePasswordTOTPSection: some View {
+        VStack(spacing: DesignConstant.sectionPadding) {
+            if !viewModel.username.isEmpty, viewModel.isAlias {
+                pendingAliasRow
             } else {
                 usernameRow
             }
@@ -293,18 +286,18 @@ struct CreateEditLoginView: View {
                 totpNotAllowedRow
             }
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedEditableSection()
     }
 
-    private var usernameRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+    var usernameRow: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.user)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Username or email")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Username or email address")
                     .sectionTitleText()
-                TextField("Add username or email", text: $viewModel.username)
+                TextField("Add username or email address", text: $viewModel.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .username)
@@ -322,98 +315,67 @@ struct CreateEditLoginView: View {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.username.isEmpty)
+        .animation(.default, value: focusedField)
         .id(usernameID)
     }
 
-    private var createdAliasRow: some View {
-        HStack {
+    var pendingAliasRow: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.alias)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Username or email")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Username or email address")
                     .sectionTitleText()
                 Text(viewModel.username)
+                    .foregroundColor(PassColor.textNorm.toColor)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Menu(content: {
-                Button(role: .destructive,
-                       action: { isShowingDeleteAliasAlert.toggle() },
-                       label: {
-                           Label(title: { Text("Delete alias") },
-                                 icon: { Image(uiImage: IconProvider.trash) })
-                       })
-            }, label: {
-                CircleButton(icon: IconProvider.threeDotsVertical,
-                             iconColor: viewModel.itemContentType().normMajor1Color,
-                             backgroundColor: viewModel.itemContentType().normMinor1Color)
-            })
-        }
-        .padding(.horizontal, kItemDetailSectionPadding)
-        .animation(.default, value: viewModel.username.isEmpty)
-        .alert("Delete alias?",
-               isPresented: $isShowingDeleteAliasAlert,
-               actions: {
-                   Button(role: .destructive,
-                          action: viewModel.removeAlias,
-                          label: { Text("Yes, delete alias") })
-
-                   Button(role: .cancel, label: { Text("Cancel") })
-               },
-               message: {
-                   Text("The alias will be deleted permanently.")
-               })
-    }
-
-    private var pendingAliasRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            ItemDetailSectionIcon(icon: IconProvider.alias)
-
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Username or email")
-                    .sectionTitleText()
-                Text(viewModel.username)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Menu(content: {
-                Button(action: viewModel.generateAlias) {
+                Button { viewModel.generateAlias() } label: {
                     Label(title: { Text("Edit alias") }, icon: { Image(uiImage: IconProvider.pencil) })
                 }
 
-                Button(role: .destructive,
-                       action: viewModel.removeAlias,
-                       label: {
-                           Label(title: { Text("Remove alias") }, icon: { Image(uiImage: IconProvider.trash) })
-                       })
+                Button { viewModel.removeAlias() }
+                    label: {
+                        Label(title: { Text("Remove alias") },
+                              icon: { Image(uiImage: IconProvider.crossCircle) })
+                    }
             }, label: {
                 CircleButton(icon: IconProvider.threeDotsVertical,
                              iconColor: viewModel.itemContentType().normMajor1Color,
                              backgroundColor: viewModel.itemContentType().normMinor1Color)
             })
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.username.isEmpty)
     }
 
-    private var passwordRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            ItemDetailSectionIcon(icon: IconProvider.key)
+    var passwordRow: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
+            if let passwordStrength = viewModel.passwordStrength {
+                PasswordStrengthIcon(strength: passwordStrength)
+            } else {
+                ItemDetailSectionIcon(icon: IconProvider.key)
+            }
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Password")
-                    .sectionTitleText()
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text(viewModel.passwordStrength.sectionTitle)
+                    .font(.footnote)
+                    .foregroundColor(viewModel.passwordStrength.sectionTitleColor)
 
                 SensitiveTextField(text: $viewModel.password,
-                                   placeholder: "Add password",
+                                   placeholder: #localized("Add password"),
                                    focusedField: $focusedField,
                                    field: Field.password,
+                                   font: .body.monospacedFont(for: viewModel.password),
                                    onSubmit: { focusedField = .totp })
+                    .keyboardType(.asciiCapable)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .foregroundColor(Color(uiColor: PassColor.textNorm))
+                    .foregroundColor(PassColor.textNorm.toColor)
                     .submitLabel(.done)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -427,42 +389,49 @@ struct CreateEditLoginView: View {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.password.isEmpty)
+        .animation(.default, value: focusedField)
+        .animation(.default, value: viewModel.passwordStrength)
         .id(passwordID)
     }
 
-    private var totpNotAllowedRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+    var totpNotAllowedRow: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.lock)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("2FA limit reached")
                     .sectionTitleText()
-                UpgradeButtonLite(action: viewModel.upgrade)
+                UpgradeButtonLite { viewModel.upgrade() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
     }
 
-    private var totpAllowedRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+    var totpAllowedRow: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.lock)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("2FA secret (TOTP)")
-                    .sectionTitleText()
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("2FA secret key (TOTP)")
+                    .sectionTitleText(isValid: viewModel.totpUriErrorMessage.isEmpty)
 
                 SensitiveTextField(text: $viewModel.totpUri,
-                                   placeholder: "Add 2FA secret",
+                                   placeholder: #localized("Add 2FA secret"),
                                    focusedField: $focusedField,
                                    field: .totp,
+                                   font: .body.monospacedFont(for: viewModel.totpUri),
                                    onSubmit: { focusedField = .websites })
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .foregroundColor(Color(uiColor: PassColor.textNorm))
+
+                if !viewModel.totpUriErrorMessage.isEmpty {
+                    InvalidInputLabel(viewModel.totpUriErrorMessage)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -475,9 +444,11 @@ struct CreateEditLoginView: View {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
+        .animation(.default, value: focusedField)
+        .animation(.default, value: viewModel.totpUriErrorMessage.isEmpty)
         .sheet(isPresented: $viewModel.isShowingNoCameraPermissionView) {
-            NoCameraPermissionView(onOpenSettings: viewModel.openSettings)
+            NoCameraPermissionView { viewModel.openSettings() }
         }
         .sheet(isPresented: $viewModel.isShowingCodeScanner) {
             WrappedCodeScannerView { result in
@@ -503,26 +474,28 @@ private struct WebsiteSection<Field: Hashable>: View {
     let onSubmit: () -> Void
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.earth)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Website")
                     .sectionTitleText()
                 VStack(alignment: .leading) {
                     ForEach($viewModel.urls) { $url in
                         HStack {
-                            TextField("https://", text: $url.value)
-                                .focused(focusedField, equals: field)
-                                .onChange(of: viewModel.urls) { _ in
-                                    viewModel.invalidURLs.removeAll()
-                                }
-                                .keyboardType(.URL)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .foregroundColor(Color(uiColor: isValid(url) ?
-                                        PassColor.textNorm : PassColor.signalDanger))
-                                .onSubmit(onSubmit)
+                            TextField(text: $url.value) {
+                                Text(verbatim: "https://")
+                            }
+                            .focused(focusedField, equals: field)
+                            .onChange(of: viewModel.urls) { _ in
+                                viewModel.invalidURLs.removeAll()
+                            }
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .foregroundColor(Color(uiColor: isValid(url) ?
+                                    PassColor.textNorm : PassColor.signalDanger))
+                            .onSubmit(onSubmit)
 
                             if !url.value.isEmpty {
                                 Button(action: {
@@ -552,7 +525,7 @@ private struct WebsiteSection<Field: Hashable>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
         .contentShape(Rectangle())
     }
@@ -576,5 +549,3 @@ private struct WebsiteSection<Field: Hashable>: View {
         }
     }
 }
-
-// swiftlint:enable type_body_length

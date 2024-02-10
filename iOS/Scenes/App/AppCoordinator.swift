@@ -23,23 +23,26 @@ import Combine
 import Core
 import CoreData
 import CryptoKit
+import DesignSystem
+import Entities
 import Factory
+import Macro
 import MBProgressHUD
-import ProtonCore_Authentication
-import ProtonCore_FeatureSwitch
-import ProtonCore_Keymaker
-import ProtonCore_Login
-import ProtonCore_Networking
-import ProtonCore_Services
-import ProtonCore_Utilities
+import ProtonCoreAuthentication
+import ProtonCoreFeatureSwitch
+import ProtonCoreKeymaker
+import ProtonCoreLogin
+import ProtonCoreNetworking
+import ProtonCoreServices
+import ProtonCoreUtilities
+import Sentry
 import SwiftUI
-import UIComponents
 import UIKit
 
+@MainActor
 final class AppCoordinator {
     private let window: UIWindow
     private let appStateObserver: AppStateObserver
-    private var container: NSPersistentContainer
     private var isUITest: Bool
 
     private var homepageCoordinator: HomepageCoordinator?
@@ -50,21 +53,21 @@ final class AppCoordinator {
     private var cancellables = Set<AnyCancellable>()
 
     private var preferences = resolve(\SharedToolingContainer.preferences)
-    private let mainKeyProvider = resolve(\SharedToolingContainer.mainKeyProvider)
     private let appData = resolve(\SharedDataContainer.appData)
-    private let apiManager = resolve(\SharedToolingContainer.apiManager)
     private let logger = resolve(\SharedToolingContainer.logger)
-    private let credentialManager = resolve(\SharedServiceContainer.credentialManager)
+    private let loginMethod = resolve(\SharedDataContainer.loginMethod)
+    private let corruptedSessionEventStream = resolve(\SharedDataStreamContainer.corruptedSessionEventStream)
+    private var corruptedSessionStream: AnyCancellable?
 
-    // Use cases
-    private let checkAccessToPass = resolve(\UseCasesContainer.checkAccessToPass)
+    @LazyInjected(\SharedToolingContainer.apiManager) private var apiManager
+    @LazyInjected(\SharedUseCasesContainer.wipeAllData) private var wipeAllData
+
+    private let sendErrorToSentry = resolve(\SharedUseCasesContainer.sendErrorToSentry)
 
     init(window: UIWindow) {
         self.window = window
         appStateObserver = .init()
 
-        container = .Builder.build(name: kProtonPassContainerName,
-                                   inMemory: false)
         isUITest = false
         clearUserDataInKeychainIfFirstRun()
         bindAppState()
@@ -72,15 +75,28 @@ final class AppCoordinator {
         // if ui test reset everything
         if ProcessInfo.processInfo.arguments.contains("RunningInUITests") {
             isUITest = true
-            wipeAllData(includingUnauthSession: true)
+            resetAllData()
         }
-        apiManager.delegate = self
+
+        apiManager.sessionWasInvalidated
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] sessionUID in
+                guard let self else { return }
+                captureErrorAndLogOut(PassError.unexpectedLogout, sessionId: sessionUID)
+            }
+            .store(in: &cancellables)
+    }
+
+    deinit {
+        corruptedSessionStream?.cancel()
+        corruptedSessionStream = nil
     }
 
     private func clearUserDataInKeychainIfFirstRun() {
         guard preferences.isFirstRun else { return }
         preferences.isFirstRun = false
-        appData.userData = nil
+        appData.setUserData(nil)
+        appData.setCredential(nil)
     }
 
     private func bindAppState() {
@@ -91,46 +107,44 @@ final class AppCoordinator {
                 guard let self else { return }
                 switch appState {
                 case let .loggedOut(reason):
-                    self.logger.info("Logged out \(reason)")
-                    let shouldWipeUnauthSession = reason != .noAuthSessionButUnauthSessionAvailable
-                    self.wipeAllData(includingUnauthSession: shouldWipeUnauthSession)
-                    self.showWelcomeScene(reason: reason)
-
-                case let .loggedIn(userData, manualLogIn):
-                    self.logger.info("Logged in manual \(manualLogIn)")
-                    self.appData.userData = userData
-                    self.apiManager.sessionIsAvailable(authCredential: userData.credential,
-                                                       scopes: userData.scopes)
-                    self.showHomeScene(userData: userData, manualLogIn: manualLogIn)
-                    if manualLogIn {
-                        self.checkAccessToPass()
+                    logger.info("Logged out \(reason)")
+                    if reason != .noAuthSessionButUnauthSessionAvailable {
+                        resetAllData()
                     }
-
+                    showWelcomeScene(reason: reason)
+                case .alreadyLoggedIn:
+                    logger.info("Already logged in")
+                    connectToCorruptedSessionStream()
+                    showHomeScene(manualLogIn: false)
+                case let .manuallyLoggedIn(userData):
+                    logger.info("Logged in manual")
+                    appData.setUserData(userData)
+                    connectToCorruptedSessionStream()
+                    showHomeScene(manualLogIn: true)
                 case .undefined:
-                    self.logger.warning("Undefined app state. Don't know what to do...")
+                    logger.warning("Undefined app state. Don't know what to do...")
                 }
+            }
+            .store(in: &cancellables)
+
+        preferences
+            .objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self else { return }
+                window.overrideUserInterfaceStyle = preferences.theme.userInterfaceStyle
             }
             .store(in: &cancellables)
     }
 
     func start() {
-        if let userData = appData.userData {
-            appStateObserver.updateAppState(.loggedIn(userData: userData, manualLogIn: false))
-        } else if appData.unauthSessionCredentials != nil {
+        if appData.isAuthenticated {
+            appStateObserver.updateAppState(.alreadyLoggedIn)
+        } else if appData.getCredential() != nil {
             appStateObserver.updateAppState(.loggedOut(.noAuthSessionButUnauthSessionAvailable))
         } else {
             appStateObserver.updateAppState(.loggedOut(.noSessionDataAtAll))
         }
-    }
-
-    func showLoadingHud() {
-        guard let view = window.rootViewController?.view else { return }
-        MBProgressHUD.showAdded(to: view, animated: true)
-    }
-
-    func hideLoadingHud() {
-        guard let view = window.rootViewController?.view else { return }
-        MBProgressHUD.hide(for: view, animated: true)
     }
 
     private func showWelcomeScene(reason: LogOutReason) {
@@ -141,32 +155,17 @@ final class AppCoordinator {
         homepageCoordinator = nil
         animateUpdateRootViewController(welcomeCoordinator.rootViewController) { [weak self] in
             guard let self else { return }
-            switch reason {
-            case .expiredRefreshToken:
-                self.alertRefreshTokenExpired()
-            case .failedBiometricAuthentication:
-                self.alertFailedBiometricAuthentication()
-            case .sessionInvalidated:
-                self.alertSessionInvalidated()
-            default:
-                break
-            }
+            handle(logOutReason: reason)
+            stopStream()
         }
     }
 
-    private func showHomeScene(userData: UserData, manualLogIn: Bool) {
-        do {
-            let symmetricKey = try appData.getSymmetricKey()
-
-            SharedDataContainer.shared.reset()
-            SharedDataContainer.shared.register(container: container,
-                                                symmetricKey: symmetricKey,
-                                                userData: userData,
-                                                manualLogIn: manualLogIn)
-            SharedToolingContainer.shared.resetCache()
-            SharedRepositoryContainer.shared.reset()
-            SharedServiceContainer.shared.reset()
-
+    private func showHomeScene(manualLogIn: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            await loginMethod.setLogInFlow(newState: manualLogIn)
             let homepageCoordinator = HomepageCoordinator()
             homepageCoordinator.delegate = self
             self.homepageCoordinator = homepageCoordinator
@@ -174,65 +173,77 @@ final class AppCoordinator {
             animateUpdateRootViewController(homepageCoordinator.rootViewController) {
                 homepageCoordinator.onboardIfNecessary()
             }
-        } catch {
-            logger.error(error)
-            wipeAllData(includingUnauthSession: true)
-            appStateObserver.updateAppState(.loggedOut(.failedToGenerateSymmetricKey))
         }
     }
 
     private func animateUpdateRootViewController(_ newRootViewController: UIViewController,
                                                  completion: (() -> Void)? = nil) {
         window.rootViewController = newRootViewController
+        window.overrideUserInterfaceStyle = preferences.theme.userInterfaceStyle
         UIView.transition(with: window,
                           duration: 0.35,
                           options: .transitionCrossDissolve,
                           animations: nil) { _ in completion?() }
     }
 
-    private func wipeAllData(includingUnauthSession: Bool) {
-        logger.info("Wiping all data, includingUnauthSession: \(includingUnauthSession)")
-        appData.userData = nil
-        if includingUnauthSession {
-            apiManager.clearCredentials()
-            mainKeyProvider.wipeMainKey()
-        }
-        preferences.reset(isTests: isUITest)
-        Task { [weak self] in
+    private func resetAllData() {
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            // Do things independently in different `do catch` blocks
-            // because we don't want a failed operation prevents others from running
-            do {
-                try await self.credentialManager.removeAllCredentials()
-                self.logger.info("Removed all credentials")
-            } catch {
-                self.logger.error(error)
-            }
+            await wipeAllData(isTests: isUITest)
+            SharedViewContainer.shared.reset()
+        }
+    }
+}
 
-            do {
-                // Delete existing persistent stores
-                let storeContainer = self.container.persistentStoreCoordinator
-                for store in storeContainer.persistentStores {
-                    if let url = store.url {
-                        try storeContainer.destroyPersistentStore(at: url, ofType: store.type)
-                    }
-                }
+// MARK: - Utils
 
-                // Re-create persistent container
-                self.container = .Builder.build(name: kProtonPassContainerName, inMemory: false)
-                self.logger.info("Nuked local data")
-            } catch {
-                self.logger.error(error)
+private extension AppCoordinator {
+    func connectToCorruptedSessionStream() {
+        guard corruptedSessionStream == nil else {
+            return
+        }
+
+        corruptedSessionStream = corruptedSessionEventStream
+            .removeDuplicates()
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] reason in
+                guard let self else { return }
+                captureErrorAndLogOut(PassError.corruptedSession(reason), sessionId: reason.sessionId)
             }
+    }
+
+    func stopStream() {
+        corruptedSessionEventStream.send(nil)
+        corruptedSessionStream?.cancel()
+        corruptedSessionStream = nil
+    }
+}
+
+private extension AppCoordinator {
+    /// Show an alert with a single "OK" button that does nothing
+    func alert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(.init(title: #localized("OK"), style: .default))
+        rootViewController?.present(alert, animated: true)
+    }
+
+    func handle(logOutReason: LogOutReason) {
+        switch logOutReason {
+        case .expiredRefreshToken, .sessionInvalidated:
+            alert(title: #localized("Your session is expired"),
+                  message: #localized("Please log in again"))
+        case .failedBiometricAuthentication:
+            alert(title: #localized("Failed to authenticate"),
+                  message: #localized("Please log in again"))
+        default:
+            break
         }
     }
 
-    private func alertRefreshTokenExpired() {
-        let alert = UIAlertController(title: "Your session is expired",
-                                      message: "Please log in again",
-                                      preferredStyle: .alert)
-        alert.addAction(.init(title: "OK", style: .default))
-        rootViewController?.present(alert, animated: true)
+    func captureErrorAndLogOut(_ error: Error, sessionId: String) {
+        sendErrorToSentry(error, sessionId: sessionId)
+        appStateObserver.updateAppState(.loggedOut(.sessionInvalidated))
     }
 }
 
@@ -240,35 +251,7 @@ final class AppCoordinator {
 
 extension AppCoordinator: WelcomeCoordinatorDelegate {
     func welcomeCoordinator(didFinishWith userData: LoginData) {
-        appStateObserver.updateAppState(.loggedIn(userData: userData, manualLogIn: true))
-    }
-
-    private func alertSessionInvalidated() {
-        let alert = UIAlertController(title: "Error occured",
-                                      message: "Your session was invalidated",
-                                      preferredStyle: .alert)
-        alert.addAction(.init(title: "OK", style: .default))
-        rootViewController?.present(alert, animated: true)
-    }
-
-    private func alertFailedBiometricAuthentication() {
-        let alert = UIAlertController(title: "Failed to authenticate",
-                                      message: "You have to log in again in order to continue using Proton Pass",
-                                      preferredStyle: .alert)
-        alert.addAction(.init(title: "OK", style: .default))
-        rootViewController?.present(alert, animated: true)
-    }
-}
-
-// MARK: - APIManagerDelegate
-
-extension AppCoordinator: APIManagerDelegate {
-    func appLoggedOutBecauseSessionWasInvalidated() {
-        // Run on main thread because the callback that triggers this function
-        // is returned by `AuthHelperDelegate` from background thread
-        DispatchQueue.main.async {
-            self.appStateObserver.updateAppState(.loggedOut(.sessionInvalidated))
-        }
+        appStateObserver.updateAppState(.manuallyLoggedIn(userData))
     }
 }
 

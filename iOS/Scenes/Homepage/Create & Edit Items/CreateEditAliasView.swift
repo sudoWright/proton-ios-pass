@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditAliasView: View {
     @Environment(\.dismiss) private var dismiss
@@ -49,10 +50,11 @@ struct CreateEditAliasView: View {
                     content
 
                 case let .error(error):
-                    RetryableErrorView(errorMessage: error.localizedDescription,
-                                       onRetry: viewModel.getAliasAndAliasOptions)
-                        .padding()
-                        .toolbar { closeButtonToolbar }
+                    RetryableErrorView(errorMessage: error.localizedDescription) {
+                        viewModel.getAliasAndAliasOptions()
+                    }
+                    .padding()
+                    .toolbar { closeButtonToolbar }
                 }
             }
             .background(Color(uiColor: PassColor.backgroundNorm))
@@ -86,7 +88,7 @@ struct CreateEditAliasView: View {
                                                selectedVault: viewModel.selectedVault,
                                                itemContentType: viewModel.itemContentType(),
                                                isEditMode: viewModel.mode.isEditMode,
-                                               onChangeVault: viewModel.changeVault,
+                                               onChangeVault: { viewModel.changeVault() },
                                                onSubmit: {
                                                    if case .create = viewModel.mode, isShowingAdvancedOptions {
                                                        focusedField = .prefix
@@ -109,7 +111,7 @@ struct CreateEditAliasView: View {
                                                 suffixSelection: suffixSelection,
                                                 prefixError: viewModel.prefixError,
                                                 onSubmitPrefix: { focusedField = .note },
-                                                onSelectSuffix: viewModel.showSuffixSelection)
+                                                onSelectSuffix: { viewModel.showSuffixSelection() })
                         } else {
                             AdvancedOptionsSection(isShowingAdvancedOptions: $isShowingAdvancedOptions)
                                 .padding(.vertical)
@@ -119,7 +121,7 @@ struct CreateEditAliasView: View {
                     if let mailboxSelection = viewModel.mailboxSelection {
                         MailboxSection(mailboxSelection: mailboxSelection,
                                        mode: viewModel.mode.isEditMode ? .edit : .create)
-                            .onTapGesture(perform: viewModel.showMailboxSelection)
+                            .onTapGesture { viewModel.showMailboxSelection() }
                     }
 
                     NoteEditSection(note: $viewModel.note,
@@ -150,17 +152,10 @@ struct CreateEditAliasView: View {
                 }
             }
         }
-        .accentColor(Color(uiColor: viewModel.itemContentType().normMajor1Color)) // Remove when dropping iOS 15
-        .tint(Color(uiColor: tintColor))
+        .tint(tintColor.toColor)
         .onFirstAppear {
             if case .create = viewModel.mode {
-                if #available(iOS 16, *) {
-                    focusedField = .title
-                } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                        focusedField = .title
-                    }
-                }
+                focusedField = .title
             }
         }
         .toolbar {
@@ -176,8 +171,9 @@ struct CreateEditAliasView: View {
                                           dismiss()
                                       }
                                   },
-                                  onUpgrade: viewModel.upgrade,
-                                  onSave: viewModel.save)
+                                  onUpgrade: { viewModel.upgrade() },
+                                  onScan: { viewModel.openScanner() },
+                                  onSave: { viewModel.save() })
         }
     }
 
@@ -185,17 +181,18 @@ struct CreateEditAliasView: View {
         HStack {
             ItemDetailSectionIcon(icon: IconProvider.alias, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Alias address")
                     .sectionTitleText()
                 switch viewModel.state {
                 case .loading:
                     ZStack {
                         // Dummy text to make ZStack occupy a correct height
-                        Text("Dummy text")
+                        Text(verbatim: "Dummy text")
                             .opacity(0)
-                        AnimatingGradient(tintColor: tintColor)
+                        SkeletonBlock(tintColor: tintColor)
                             .clipShape(Capsule())
+                            .shimmering()
                     }
                 default:
                     Text(viewModel.aliasEmail)
@@ -204,7 +201,7 @@ struct CreateEditAliasView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedDetailSection()
     }
 
@@ -212,7 +209,7 @@ struct CreateEditAliasView: View {
         HStack {
             ItemDetailSectionIcon(icon: IconProvider.alias, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("You are about to create")
                     .sectionTitleText()
 
@@ -224,10 +221,11 @@ struct CreateEditAliasView: View {
                     case .loading:
                         ZStack {
                             // Dummy text to make ZStack occupy a correct height
-                            Text("Dummy text")
+                            Text(verbatim: "Dummy text")
                                 .opacity(0)
-                            AnimatingGradient(tintColor: tintColor)
+                            SkeletonBlock(tintColor: tintColor)
                                 .clipShape(Capsule())
+                                .shimmering()
                         }
 
                     default:
@@ -241,7 +239,7 @@ struct CreateEditAliasView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .animation(.default, value: viewModel.prefixError)
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedDetailSection()
     }
 }

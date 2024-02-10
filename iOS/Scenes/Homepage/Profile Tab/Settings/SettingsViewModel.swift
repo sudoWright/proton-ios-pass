@@ -21,24 +21,20 @@
 import Client
 import Combine
 import Core
+import Entities
 import Factory
 import SwiftUI
 
+@MainActor
 protocol SettingsViewModelDelegate: AnyObject {
-    func settingsViewModelWantsToShowSpinner()
-    func settingsViewModelWantsToHideSpinner()
     func settingsViewModelWantsToGoBack()
-    func settingsViewModelWantsToEditDefaultBrowser(supportedBrowsers: [Browser])
+    func settingsViewModelWantsToEditDefaultBrowser()
     func settingsViewModelWantsToEditTheme()
     func settingsViewModelWantsToEditClipboardExpiration()
-    func settingsViewModelWantsToEdit(primaryVault: Vault)
-    func settingsViewModelWantsToViewHostAppLogs()
-    func settingsViewModelWantsToViewAutoFillExtensionLogs()
     func settingsViewModelWantsToClearLogs()
-    func settingsViewModelDidFinishFullSync()
-    func settingsViewModelDidEncounter(error: Error)
 }
 
+@MainActor
 final class SettingsViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -47,12 +43,14 @@ final class SettingsViewModel: ObservableObject, DeinitPrintable {
     private let logger = resolve(\SharedToolingContainer.logger)
     private let preferences = resolve(\SharedToolingContainer.preferences)
     private let syncEventLoop: SyncEventLoopActionProtocol = resolve(\SharedServiceContainer.syncEventLoop)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+
     let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
 
-    let supportedBrowsers: [Browser]
     @Published private(set) var selectedBrowser: Browser
     @Published private(set) var selectedTheme: Theme
     @Published private(set) var selectedClipboardExpiration: ClipboardExpiration
+
     @Published var displayFavIcons: Bool {
         didSet {
             preferences.displayFavIcons = displayFavIcons
@@ -69,48 +67,13 @@ final class SettingsViewModel: ObservableObject, DeinitPrintable {
 
     init(isShownAsSheet: Bool) {
         self.isShownAsSheet = isShownAsSheet
-
-        let installedBrowsers = Browser.thirdPartyBrowsers.filter { browser in
-            guard let appScheme = browser.appScheme,
-                  let testUrl = URL(string: appScheme + "proton.me") else {
-                return false
-            }
-            return UIApplication.shared.canOpenURL(testUrl)
-        }
-
-        switch preferences.browser {
-        case .inAppSafari, .safari:
-            selectedBrowser = preferences.browser
-        default:
-            if installedBrowsers.contains(preferences.browser) {
-                selectedBrowser = preferences.browser
-            } else {
-                selectedBrowser = .safari
-            }
-        }
-
-        supportedBrowsers = [.safari, .inAppSafari] + installedBrowsers
-
+        selectedBrowser = preferences.browser
         selectedTheme = preferences.theme
         selectedClipboardExpiration = preferences.clipboardExpiration
         displayFavIcons = preferences.displayFavIcons
         shareClipboard = preferences.shareClipboard
 
-        preferences
-            .objectWillChange
-            .sink { [weak self] in
-                guard let self else {
-                    return
-                }
-                // These options are changed in other pages by passing a references
-                // of Preferences. So we listen to changes and update here.
-                self.selectedBrowser = self.preferences.browser
-                self.selectedTheme = self.preferences.theme
-                self.selectedClipboardExpiration = self.preferences.clipboardExpiration
-            }
-            .store(in: &cancellables)
-
-        vaultsManager.attach(to: self, storeIn: &cancellables)
+        setup()
     }
 }
 
@@ -122,7 +85,7 @@ extension SettingsViewModel {
     }
 
     func editDefaultBrowser() {
-        delegate?.settingsViewModelWantsToEditDefaultBrowser(supportedBrowsers: supportedBrowsers)
+        delegate?.settingsViewModelWantsToEditDefaultBrowser()
     }
 
     func editTheme() {
@@ -133,16 +96,12 @@ extension SettingsViewModel {
         delegate?.settingsViewModelWantsToEditClipboardExpiration()
     }
 
-    func edit(primaryVault: Vault) {
-        delegate?.settingsViewModelWantsToEdit(primaryVault: primaryVault)
-    }
-
     func viewHostAppLogs() {
-        delegate?.settingsViewModelWantsToViewHostAppLogs()
+        router.present(for: .logView(module: .hostApp))
     }
 
     func viewAutoFillExensionLogs() {
-        delegate?.settingsViewModelWantsToViewAutoFillExtensionLogs()
+        router.present(for: .logView(module: .autoFillExtension))
     }
 
     func clearLogs() {
@@ -151,18 +110,18 @@ extension SettingsViewModel {
 
     func forceSync() {
         Task { @MainActor [weak self] in
-            defer { self?.delegate?.settingsViewModelWantsToHideSpinner() }
+            guard let self else { return }
             do {
-                self?.syncEventLoop.stop()
-                self?.logger.info("Doing full sync")
-                self?.delegate?.settingsViewModelWantsToShowSpinner()
-                try await self?.vaultsManager.fullSync()
-                self?.logger.info("Done full sync")
-                self?.syncEventLoop.start()
-                self?.delegate?.settingsViewModelDidFinishFullSync()
+                router.present(for: .fullSync)
+                syncEventLoop.stop()
+                logger.info("Doing full sync")
+                try await vaultsManager.fullSync()
+                logger.info("Done full sync")
+                syncEventLoop.start()
+                router.display(element: .successMessage(config: .refresh))
             } catch {
-                self?.logger.error(error)
-                self?.delegate?.settingsViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -171,15 +130,33 @@ extension SettingsViewModel {
 // MARK: - Private APIs
 
 private extension SettingsViewModel {
+    func setup() {
+        preferences
+            .objectWillChange
+            .sink { [weak self] in
+                guard let self else {
+                    return
+                }
+                // These options are changed in other pages by passing a references
+                // of Preferences. So we listen to changes and update here.
+                selectedBrowser = preferences.browser
+                selectedTheme = preferences.theme
+                selectedClipboardExpiration = preferences.clipboardExpiration
+            }
+            .store(in: &cancellables)
+
+        vaultsManager.attach(to: self, storeIn: &cancellables)
+    }
+
     func emptyFavIconCache() {
         Task { [weak self] in
             guard let self else { return }
             do {
-                self.logger.trace("Fav icons are disabled. Removing all cached fav icons")
-                try self.favIconRepository.emptyCache()
-                self.logger.info("Removed all cached fav icons")
+                logger.trace("Fav icons are disabled. Removing all cached fav icons")
+                try await favIconRepository.emptyCache()
+                logger.info("Removed all cached fav icons")
             } catch {
-                self.logger.error(error)
+                logger.error(error)
             }
         }
     }

@@ -18,15 +18,15 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditCreditCardView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CreateEditCreditCardViewModel
     @FocusState private var focusedField: Field?
-    @State private var selectedNumber = 0
     @State private var isShowingDiscardAlert = false
 
     private var tintColor: UIColor { viewModel.itemContentType().normMajor1Color }
@@ -64,7 +64,7 @@ private extension CreateEditCreditCardView {
                                                selectedVault: viewModel.selectedVault,
                                                itemContentType: viewModel.itemContentType(),
                                                isEditMode: viewModel.mode.isEditMode,
-                                               onChangeVault: viewModel.changeVault,
+                                               onChangeVault: { viewModel.changeVault() },
                                                onSubmit: { focusedField = .cardholderName })
 
                     cardDetailSection
@@ -77,17 +77,10 @@ private extension CreateEditCreditCardView {
             }
         }
         .background(PassColor.backgroundNorm.toColor)
-        .accentColor(tintColor.toColor) // Remove when dropping iOS 15
         .tint(tintColor.toColor)
         .onFirstAppear {
             if case .create = viewModel.mode {
-                if #available(iOS 16, *) {
-                    focusedField = .title
-                } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                        focusedField = .title
-                    }
-                }
+                focusedField = .title
             }
         }
         .toolbar {
@@ -103,9 +96,13 @@ private extension CreateEditCreditCardView {
                                           dismiss()
                                       }
                                   },
-                                  onUpgrade: viewModel.upgrade,
-                                  onSave: viewModel.save)
+                                  onUpgrade: { viewModel.upgrade() },
+                                  onScan: { viewModel.openScanner() },
+                                  onSave: { viewModel.save() })
         }
+        .scannerSheet(isPresented: $viewModel.isShowingScanner,
+                      interpreter: viewModel.interpretor,
+                      resultStream: viewModel.scanResponsePublisher)
     }
 
     var upsellBanner: some View {
@@ -120,29 +117,29 @@ private extension CreateEditCreditCardView {
 
 private extension CreateEditCreditCardView {
     var cardDetailSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
+        VStack(spacing: DesignConstant.sectionPadding) {
             cardholderNameRow
             PassSectionDivider()
             cardNumberRow
             PassSectionDivider()
+            expirationDateRow
+            PassSectionDivider()
             verificationNumberRow
             PassSectionDivider()
             pinRow
-            PassSectionDivider()
-            expirationDateRow
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedEditableSection()
     }
 
     var cardholderNameRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.user)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Cardholder name")
                     .sectionTitleText()
-                TextField("Full name", text: $viewModel.cardholderName)
+                TextField("Name on card", text: $viewModel.cardholderName)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .cardholderName)
@@ -160,15 +157,15 @@ private extension CreateEditCreditCardView {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.cardholderName.isEmpty)
     }
 
     var cardNumberRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.creditCard)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Card number")
                     .sectionTitleText()
                 WrappedUITextField(text: $viewModel.cardNumber,
@@ -190,16 +187,16 @@ private extension CreateEditCreditCardView {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.cardNumber.isEmpty)
     }
 
     var verificationNumberRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: PassIcon.shieldCheck)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Verification number")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Security code")
                     .sectionTitleText()
 
                 SensitiveTextField(text: $viewModel.verificationNumber,
@@ -222,16 +219,16 @@ private extension CreateEditCreditCardView {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.verificationNumber.isEmpty)
     }
 
     var pinRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.grid3)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("PIN")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("PIN Code")
                     .sectionTitleText()
 
                 SensitiveTextField(text: $viewModel.pin,
@@ -254,24 +251,24 @@ private extension CreateEditCreditCardView {
                 })
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.verificationNumber.isEmpty)
     }
 
     var expirationDateRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.calendarDay)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Expires on")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Expiration date")
                     .sectionTitleText()
-                MonthYearTextField(placeholder: "MM / YYYY",
+                MonthYearTextField(placeholder: #localized("MM / YY"),
                                    tintColor: tintColor,
                                    month: $viewModel.month,
                                    year: $viewModel.year)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
     }
 }

@@ -18,14 +18,19 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct VaultRow<Thumbnail: View>: View {
     let thumbnail: () -> Thumbnail
     let title: String
     let itemCount: Int
+    let isShared: Bool
     let isSelected: Bool
+    var showBadge = false
+    var maxWidth: CGFloat? = .infinity
     var height: CGFloat = 70
 
     var body: some View {
@@ -40,21 +45,43 @@ struct VaultRow<Thumbnail: View>: View {
                     Text("Empty")
                         .placeholderText()
                 } else {
-                    Text("\(itemCount) items")
+                    Text("\(itemCount) item(s)")
                         .font(.callout)
                         .foregroundColor(Color(uiColor: PassColor.textWeak))
                 }
             }
 
-            Spacer()
+            if maxWidth != nil {
+                Spacer()
+            }
+
+            if isShared {
+                HStack(spacing: 0) {
+                    Image(uiImage: IconProvider.users)
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundColor(PassColor.textWeak.toColor)
+                        .frame(maxHeight: 20)
+                    if showBadge {
+                        Image(uiImage: IconProvider.exclamationCircleFilled)
+                            .resizable()
+                            .scaledToFit()
+                            .foregroundColor(PassColor.signalDanger.toColor)
+                            .frame(maxHeight: 16)
+                            .offset(y: -10)
+                    }
+                }
+            }
 
             if isSelected {
-                Label("", systemImage: "checkmark")
+                Image(uiImage: IconProvider.checkmark)
+                    .resizable()
+                    .scaledToFit()
                     .foregroundColor(Color(uiColor: PassColor.interactionNorm))
-                    .padding(.trailing)
+                    .frame(maxHeight: 20)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: maxWidth)
         .frame(height: height)
         .contentShape(Rectangle())
     }

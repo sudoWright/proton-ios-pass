@@ -23,67 +23,54 @@ import Combine
 import Core
 import CryptoKit
 import Factory
-import ProtonCore_Authentication
-import ProtonCore_Challenge
-import ProtonCore_CryptoGoInterface
-import ProtonCore_Environment
-import ProtonCore_FeatureSwitch
-import ProtonCore_ForceUpgrade
-import ProtonCore_Foundations
-import ProtonCore_HumanVerification
-import ProtonCore_Keymaker
-import ProtonCore_Login
-import ProtonCore_Networking
-import ProtonCore_Observability
-import ProtonCore_Services
+import Foundation
+import ProtonCoreAuthentication
+import ProtonCoreChallenge
+import ProtonCoreCryptoGoInterface
+import ProtonCoreEnvironment
+import ProtonCoreForceUpgrade
+import ProtonCoreFoundations
+import ProtonCoreHumanVerification
+import ProtonCoreKeymaker
+import ProtonCoreLogin
+@preconcurrency import ProtonCoreNetworking
+import ProtonCoreObservability
+import ProtonCoreServices
+import SwiftUI
+import UIKit
 
-protocol APIManagerDelegate: AnyObject {
-    func appLoggedOutBecauseSessionWasInvalidated()
-}
+final class APIManager {
+    typealias SessionUID = String
 
-public protocol APIManagerProtocol {
-    var userData: UserData? { get }
-    var apiService: APIService { get }
-}
-
-final class APIManager: APIManagerProtocol {
     private let logger = resolve(\SharedToolingContainer.logger)
     private let appVer = resolve(\SharedToolingContainer.appVersion)
     private let appData = resolve(\SharedDataContainer.appData)
     private let preferences = resolve(\SharedToolingContainer.preferences)
+    private let doh = resolve(\SharedToolingContainer.doh)
     private let trustKitDelegate: TrustKitDelegate
+    let authHelper: AuthManagerProtocol = resolve(\SharedToolingContainer.authManager)
 
     private(set) var apiService: APIService
-    private(set) var authHelper: AuthHelper
     private(set) var forceUpgradeHelper: ForceUpgradeHelper?
     private(set) var humanHelper: HumanCheckHelper?
 
-    private var cancellables = Set<AnyCancellable>()
-
-    weak var delegate: APIManagerDelegate?
-
-    var userData: UserData? {
-        appData.userData
-    }
+    let sessionWasInvalidated: PassthroughSubject<SessionUID, Never> = .init()
 
     init() {
         let trustKitDelegate = PassTrustKitDelegate()
         APIManager.setUpCertificatePinning(trustKitDelegate: trustKitDelegate)
         self.trustKitDelegate = trustKitDelegate
 
-        let doh = ProtonPassDoH()
         let apiService: PMAPIService
         let challengeProvider = ChallengeParametersProvider.forAPIService(clientApp: .pass,
                                                                           challenge: .init())
-        if let credential = appData.userData?.credential ?? appData.unauthSessionCredentials {
+        if let credential = appData.getCredential() {
             apiService = PMAPIService.createAPIService(doh: doh,
                                                        sessionUID: credential.sessionID,
                                                        challengeParametersProvider: challengeProvider)
-            authHelper = AuthHelper(authCredential: credential)
         } else {
             apiService = PMAPIService.createAPIServiceWithoutSession(doh: doh,
                                                                      challengeParametersProvider: challengeProvider)
-            authHelper = AuthHelper()
         }
         self.apiService = apiService
         authHelper.setUpDelegate(self, callingItOn: .immediateExecutor)
@@ -93,7 +80,8 @@ final class APIManager: APIManagerProtocol {
 
         humanHelper = HumanCheckHelper(apiService: apiService,
                                        inAppTheme: { [weak self] in
-                                           self?.preferences.theme.inAppTheme ?? .matchSystem
+                                           guard let self else { return .matchSystem }
+                                           return preferences.theme.inAppTheme
                                        },
                                        clientApp: .pass)
         apiService.humanDelegate = humanHelper
@@ -112,44 +100,30 @@ final class APIManager: APIManagerProtocol {
 
         setUpCore()
         fetchUnauthSessionIfNeeded()
-        useNewTokensWhenAppBackToForegound()
-    }
-
-    func sessionIsAvailable(authCredential: AuthCredential, scopes: Scopes) {
-        apiService.setSessionUID(uid: authCredential.sessionID)
-        authHelper.onSessionObtaining(credential: Credential(authCredential, scopes: scopes))
     }
 
     func clearCredentials() {
-        appData.unauthSessionCredentials = nil
+        appData.setUserData(nil)
+        appData.setCredential(nil)
         apiService.setSessionUID(uid: "")
-        // destroying and recreating AuthHelper to clear its cache
-        authHelper = AuthHelper()
-        authHelper.setUpDelegate(self, callingItOn: .immediateExecutor)
-        apiService.authDelegate = authHelper
     }
+}
 
-    private static func setUpCertificatePinning(trustKitDelegate: TrustKitDelegate) {
+// MARK: - Utils
+
+private extension APIManager {
+    static func setUpCertificatePinning(trustKitDelegate: TrustKitDelegate) {
         TrustKitWrapper.setUp(delegate: trustKitDelegate)
-        PMAPIService.noTrustKit = false
-        PMAPIService.trustKit = TrustKitWrapper.current
+        let trustKit = TrustKitWrapper.current
+        PMAPIService.trustKit = trustKit
+        PMAPIService.noTrustKit = trustKit == nil
     }
 
-    private func setUpCore() {
-        FeatureFactory.shared.enable(&.observability)
-        // Core unauth session feature flag
-        FeatureFactory.shared.enable(&.unauthSession)
-
-        FeatureFactory.shared.enable(&.externalSignup)
-        #if DEBUG
-        FeatureFactory.shared.enable(&.enforceUnauthSessionStrictVerificationOnBackend)
-        #endif
+    func setUpCore() {
         ObservabilityEnv.current.setupWorld(requestPerformer: apiService)
     }
 
-    private func fetchUnauthSessionIfNeeded() {
-        guard FeatureFactory.shared.isEnabled(.unauthSession) else { return }
-
+    func fetchUnauthSessionIfNeeded() {
         apiService.acquireSessionIfNeeded { result in
             switch result {
             case .success:
@@ -163,31 +137,6 @@ final class APIManager: APIManagerProtocol {
             }
         }
     }
-
-    // UserData with new access token & refresh token can be updated from AutoFill extension
-    // Update the session of AuthHelper here to take the new tokens into account
-    // Otherwise old token are used and user would be logged out
-    private func useNewTokensWhenAppBackToForegound() {
-        NotificationCenter.default
-            .publisher(for: UIApplication.willEnterForegroundNotification)
-            .sink { [weak self] _ in
-                guard let userData = self?.appData.userData else { return }
-                self?.authHelper.onSessionObtaining(credential: userData.getCredential)
-            }
-            .store(in: &cancellables)
-    }
-
-    // Create a new instance of UserData with everything copied except credential
-    private func update(userData: UserData, authCredential: AuthCredential) {
-        let updatedUserData = UserData(credential: authCredential,
-                                       user: userData.user,
-                                       salts: userData.salts,
-                                       passphrases: userData.passphrases,
-                                       addresses: userData.addresses,
-                                       scopes: userData.scopes)
-        appData.userData = updatedUserData
-        appData.unauthSessionCredentials = nil
-    }
 }
 
 // MARK: - AuthHelperDelegate
@@ -195,10 +144,10 @@ final class APIManager: APIManagerProtocol {
 extension APIManager: AuthHelperDelegate {
     func sessionWasInvalidated(for sessionUID: String, isAuthenticatedSession: Bool) {
         clearCredentials()
+
         if isAuthenticatedSession {
-            logger.info("Authenticated session is invalidated. Logging out...")
-            appData.userData = nil
-            delegate?.appLoggedOutBecauseSessionWasInvalidated()
+            logger.info("Authenticated session is invalidated. Logging out.")
+            sessionWasInvalidated.send(sessionUID)
         } else {
             logger.info("Unauthenticated session is invalidated. Credentials are erased, fetching new ones")
             fetchUnauthSessionIfNeeded()
@@ -207,11 +156,7 @@ extension APIManager: AuthHelperDelegate {
 
     func credentialsWereUpdated(authCredential: AuthCredential, credential: Credential, for sessionUID: String) {
         logger.info("Session credentials are updated")
-        if let userData = appData.userData {
-            update(userData: userData, authCredential: authCredential)
-        } else {
-            appData.unauthSessionCredentials = authCredential
-        }
+        appData.setCredential(authCredential)
     }
 }
 
@@ -268,10 +213,8 @@ extension APIManager: APIServiceLoggingDelegate {
     func accessTokenRefreshDidFail(for sessionID: String,
                                    sessionType: APISessionTypeForLogging,
                                    error: APIServiceAccessTokenRefreshErrorForLogging) {
-        logger.info("""
-        Access token refresh did fail for \(sessionType) session \(sessionID)
-        with error \(error.localizedDescription)
-        """)
+        logger.error(message: "Access token refresh did fail for \(sessionType) session \(sessionID)",
+                     error: error)
     }
 }
 

@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SearchRecentResultsView: View {
     let results: [SearchEntryUiModel]
@@ -32,11 +33,11 @@ struct SearchRecentResultsView: View {
     var body: some View {
         VStack {
             HStack {
-                Text("Saved searches")
+                Text("Recent searches")
                     .font(.callout)
                     .fontWeight(.bold)
                     .foregroundColor(Color(uiColor: PassColor.textNorm)) +
-                    Text(" (\(results.count))")
+                    Text(verbatim: " (\(results.count))")
                     .font(.callout)
                     .foregroundColor(Color(uiColor: PassColor.textWeak))
 

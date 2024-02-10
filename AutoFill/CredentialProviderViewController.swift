@@ -19,13 +19,23 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import AuthenticationServices
+import Factory
+import ProtonCoreCryptoGoImplementation
 
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     private lazy var coordinator: CredentialProviderCoordinator = .init(rootViewController: self)
+    private let resetFactory = resolve(\AutoFillUseCaseContainer.resetFactory)
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        injectDefaultCryptoImplementation()
         AutoFillDataContainer.shared.register(context: extensionContext)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        resetFactory()
     }
 
     /*

@@ -19,9 +19,9 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
 import Entities
 import SwiftUI
-import UIComponents
 
 // MARK: - UI helpers
 
@@ -40,17 +40,5 @@ extension Vault {
 
     var smallImage: Image {
         displayPreferences.icon.icon.smallImage.toImage
-    }
-
-    var isAdmin: Bool {
-        shareRole == ShareRole.admin
-    }
-
-    var canEdit: Bool {
-        shareRole != ShareRole.read
-    }
-
-    var isShared: Bool {
-        members > 1
     }
 }

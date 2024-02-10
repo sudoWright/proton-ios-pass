@@ -18,20 +18,26 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import BackgroundTasks
+import Client
 import Core
 import Factory
-import ProtonCore_CryptoGoImplementation
-import ProtonCore_CryptoGoInterface
-import Sentry
+import ProtonCoreCryptoGoImplementation
+import ProtonCoreCryptoGoInterface
+import ProtonCoreLog
 import UIKit
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    private let getRustLibraryVersion = resolve(\UseCasesContainer.getRustLibraryVersion)
+    private let setUpSentry = resolve(\SharedUseCasesContainer.setUpSentry)
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         injectDefaultCryptoImplementation()
-        setUpSentry()
+        setUpSentry(bundle: .main)
         setUpDefaultValuesForSettingsBundle()
+        configureCoreLogger()
         return true
     }
 
@@ -47,22 +53,33 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 private extension AppDelegate {
-    func setUpSentry() {
-        SentrySDK.start { options in
-            options.dsn = Bundle.main.plistString(for: .sentryDSN, in: .prod)
-            if ProcessInfo.processInfo.environment["me.proton.pass.SentryDebug"] == "1" {
-                options.debug = true
-            }
-            options.enableAppHangTracking = true
-            options.enableFileIOTracking = true
-            options.enableCoreDataTracking = true
-            options.attachViewHierarchy = true // EXPERIMENTAL
-        }
+    private func configureCoreLogger() {
+        let environment = ProtonPassDoH(bundle: .main).environment.name
+        PMLog.setEnvironment(environment: environment)
     }
 
     func setUpDefaultValuesForSettingsBundle() {
         let appVersionKey = "pref_app_version"
         kSharedUserDefaults.register(defaults: [appVersionKey: "-"])
         kSharedUserDefaults.set(Bundle.main.displayedAppVersion, forKey: appVersionKey)
+
+        let rustVersionKey = "pref_rust_version"
+        kSharedUserDefaults.register(defaults: [rustVersionKey: "-"])
+        kSharedUserDefaults.set(getRustLibraryVersion(), forKey: rustVersionKey)
+
+        setUserDefaultsIfUITestsRunning()
+    }
+
+    private func setUserDefaultsIfUITestsRunning() {
+        if ProcessInfo.processInfo.arguments.contains("RunningInUITests") {
+            UIView.setAnimationsEnabled(false)
+            if ProcessInfo.processInfo.environment["DYNAMIC_DOMAIN"] != "" {
+                let envDomain = ProcessInfo.processInfo.environment["DYNAMIC_DOMAIN"]
+                let envName = String(envDomain?.split(separator: ".")[0] ?? "")
+
+                kSharedUserDefaults.setValue("scientist", forKey: "pref_environment")
+                kSharedUserDefaults.setValue(envName, forKey: "pref_scientist_env_name")
+            }
+        }
     }
 }

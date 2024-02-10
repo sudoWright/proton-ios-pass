@@ -19,16 +19,16 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import Entities
 import Factory
 import SwiftUI
 
+@MainActor
 protocol LogsViewModelDelegate: AnyObject {
-    func logsViewModelWantsToShowSpinner()
-    func logsViewModelWantsToHideSpinner()
     func logsViewModelWantsToShareLogs(_ url: URL)
-    func logsViewModelDidEncounter(error: Error)
 }
 
+@MainActor
 final class LogsViewModel: DeinitPrintable, ObservableObject {
     deinit {
         print(deinitMessage)
@@ -40,8 +40,17 @@ final class LogsViewModel: DeinitPrintable, ObservableObject {
     @Published private(set) var isLoading = true
     @Published private(set) var entries = [LogEntry]()
     @Published private(set) var error: Error?
+    @Published private(set) var sharingLogs = false
+    @Published var logLevel: LogLevel?
 
-    var formattedEntries: [String] { entries.map(logFormatter.format(entry:)) }
+    var formattedEntries: [String] {
+        let takenEntries: [LogEntry] = if let logLevel {
+            entries.filter { $0.level == logLevel }
+        } else {
+            entries
+        }
+        return takenEntries.map(logFormatter.format(entry:))
+    }
 
     private var fileToDelete: URL?
 
@@ -52,6 +61,7 @@ final class LogsViewModel: DeinitPrintable, ObservableObject {
 
     private let getLogEntries = resolve(\UseCasesContainer.getLogEntries)
     private let extractLogsToFile = resolve(\UseCasesContainer.extractLogsToFile)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
 
     init(module: PassModule) {
         self.module = module
@@ -66,7 +76,6 @@ final class LogsViewModel: DeinitPrintable, ObservableObject {
             do {
                 self.isLoading = true
                 self.entries = try await self.getLogEntries(for: self.module)
-                self.isLoading = false
             } catch {
                 self.error = error
             }
@@ -76,17 +85,16 @@ final class LogsViewModel: DeinitPrintable, ObservableObject {
     func shareLogs() {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { self.sharingLogs = false }
             do {
-                self.delegate?.logsViewModelWantsToShowSpinner()
+                self.sharingLogs = true
                 self.fileToDelete = try await self.extractLogsToFile(for: self.entries,
                                                                      in: self.module.exportLogFileName)
-                self.delegate?.logsViewModelWantsToHideSpinner()
                 if let fileToDelete {
                     self.delegate?.logsViewModelWantsToShareLogs(fileToDelete)
                 }
             } catch {
-                self.delegate?.logsViewModelWantsToHideSpinner()
-                self.delegate?.logsViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }

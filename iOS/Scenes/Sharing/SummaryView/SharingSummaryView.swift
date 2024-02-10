@@ -21,29 +21,36 @@
 //
 
 import Core
+import DesignSystem
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SharingSummaryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = SharingSummaryViewModel()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                headerView
-                vaultInfo
-                emailInfo
-                permissionInfo
-                Spacer()
+        VStack(alignment: .leading, spacing: 26) {
+            Text("Review and share")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(PassColor.textNorm.toColor)
+            if viewModel.hasSingleInvite, let info = viewModel.infos.first {
+                emailInfo(infos: info)
+                vaultInfo(infos: info)
+                permissionInfo(infos: info)
+            } else if let info = viewModel.infos.first {
+                vaultInfo(infos: info)
+                infosList
             }
+            Spacer()
         }
-        .errorAlert(error: $viewModel.error)
         .navigationBarBackButtonHidden(true)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(uiColor: PassColor.backgroundNorm))
         .toolbar { toolbarContent }
@@ -52,68 +59,40 @@ struct SharingSummaryView: View {
 }
 
 private extension SharingSummaryView {
-    var headerView: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            Text("Summary")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(PassColor.textNorm.toColor)
-            Text("""
-            You are about to invite \(attributedText(for: viewModel.infos?
-                    .email ?? "")) into your \(attributedText(for: viewModel.infos?.vault?.name ?? "")) vault.
-            They will gain access to \(attributedText(for: viewModel.infos?.itemsNum?
-                    .toString ?? "0")) items and they will be able to \(attributedText(for: viewModel.infos?.role?
-                    .summary ?? ""))
-            """)
-            .font(.body)
-            .foregroundColor(PassColor.textWeak.toColor)
-        }
-    }
-
-    func attributedText(for text: String) -> AttributedString {
-        var result = AttributedString(text)
-        result.font = .body.bold()
-        result.foregroundColor = PassColor.textNorm
-        return result
-    }
-}
-
-private extension SharingSummaryView {
-    var vaultInfo: some View {
+    func vaultInfo(infos: SharingInfos) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Vault")
-                .font(.body)
+                .font(.callout)
                 .foregroundColor(PassColor.textWeak.toColor)
                 .frame(height: 20)
-            if let vault = viewModel.infos?.vault {
-                VaultRow(thumbnail: {
-                             CircleButton(icon: vault.displayPreferences.icon.icon.bigImage,
-                                          iconColor: vault.displayPreferences.color.color.color,
-                                          backgroundColor: vault.displayPreferences.color.color.color
-                                              .withAlphaComponent(0.16))
-                         },
-                         title: vault.name,
-                         itemCount: viewModel.infos?.itemsNum ?? 0,
-                         isSelected: false,
-                         height: 60)
-            }
+            VaultRow(thumbnail: {
+                         CircleButton(icon: infos.displayPreferences.icon.icon.bigImage,
+                                      iconColor: infos.displayPreferences.color.color.color,
+                                      backgroundColor: infos.displayPreferences.color.color.color
+                                          .withAlphaComponent(0.16))
+                     },
+                     title: infos.vaultName,
+                     itemCount: infos.itemsNum,
+                     isShared: infos.shared,
+                     isSelected: false,
+                     height: 60)
         }
     }
 }
 
 private extension SharingSummaryView {
-    var emailInfo: some View {
+    func emailInfo(infos: SharingInfos) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("User")
-                .font(.body)
+            Text("Share with")
+                .font(.callout)
                 .foregroundColor(PassColor.textWeak.toColor)
                 .frame(height: 20)
-            HStack(spacing: kItemDetailSectionPadding) {
-                SquircleThumbnail(data: .initials(viewModel.infos?.email?.initialsRemovingEmojis() ?? ""),
+            HStack(spacing: DesignConstant.sectionPadding) {
+                SquircleThumbnail(data: .initials(infos.email.initials()),
                                   tintColor: ItemType.login.tintColor,
                                   backgroundColor: ItemType.login.backgroundColor)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(viewModel.infos?.email ?? "")
+                    Text(infos.email)
                         .foregroundColor(PassColor.textNorm.toColor)
                 }
             }
@@ -123,27 +102,59 @@ private extension SharingSummaryView {
 }
 
 private extension SharingSummaryView {
-    var permissionInfo: some View {
+    func permissionInfo(infos: SharingInfos) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Permission")
-                .font(.body)
+            Text("Access level")
+                .font(.callout)
                 .foregroundColor(PassColor.textWeak.toColor)
                 .frame(height: 20)
-            if let role = viewModel.infos?.role {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(role.title)
-                        .font(.body)
-                        .foregroundColor(PassColor.textNorm.toColor)
-                    Text(role.description)
-                        .font(.body)
-                        .foregroundColor(PassColor.textWeak.toColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(infos.role.title)
+                    .font(.body)
+                    .foregroundColor(PassColor.textNorm.toColor)
+                Text(infos.role.description)
+                    .font(.body)
+                    .foregroundColor(PassColor.textWeak.toColor)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cornerRadius(16)
+                    .overlay(RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(PassColor.textWeak.toColor,
+                                      lineWidth: 1))
+            }
+        }
+    }
+}
+
+private extension SharingSummaryView {
+    var infosList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Share with")
+                    .font(.callout)
+                    .foregroundColor(PassColor.textWeak.toColor)
+                    .frame(height: 20)
+
+                LazyVStack {
+                    ForEach(viewModel.infos) { info in
+                        HStack(spacing: DesignConstant.sectionPadding) {
+                            SquircleThumbnail(data: .initials(info.email.initials()),
+                                              tintColor: ItemType.login.tintColor,
+                                              backgroundColor: ItemType.login.backgroundColor)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(info.email)
+                                    .foregroundColor(PassColor.textNorm.toColor)
+                                HStack {
+                                    Text(info.role.title)
+                                        .foregroundColor(PassColor.textWeak.toColor)
+                                }
+                            }
+
+                            Spacer()
+                        }.padding(8)
+                    }
+                    .listRowSeparator(.hidden)
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cornerRadius(16)
-                .overlay(RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(PassColor.textWeak.toColor,
-                                  lineWidth: 1))
             }
         }
     }
@@ -160,7 +171,7 @@ private extension SharingSummaryView {
         }
 
         ToolbarItem(placement: .navigationBarTrailing) {
-            DisablableCapsuleTextButton(title: "Share Vault",
+            DisablableCapsuleTextButton(title: #localized("Share Vault"),
                                         titleColor: PassColor.textInvert,
                                         disableTitleColor: PassColor.textHint,
                                         backgroundColor: PassColor.interactionNormMajor1,
@@ -171,8 +182,6 @@ private extension SharingSummaryView {
     }
 }
 
-struct SharingSummaryView_Previews: PreviewProvider {
-    static var previews: some View {
-        SharingSummaryView()
-    }
+#Preview("SharingSummaryView Preview") {
+    SharingSummaryView()
 }

@@ -18,9 +18,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SearchView: View {
     @Environment(\.dismiss) private var dismiss
@@ -42,7 +42,7 @@ struct SearchView: View {
 
                 case let .error(error):
                     RetryableErrorView(errorMessage: error.localizedDescription,
-                                       onRetry: viewModel.refreshResults)
+                                       onRetry: { viewModel.refreshResults() })
                 }
             }
             .animation(.default, value: viewModel.state)
@@ -52,7 +52,6 @@ struct SearchView: View {
                 viewModel.refreshResults()
             }
         }
-        .syncLayoutOnDisappear()
     }
 
     private var content: some View {
@@ -72,31 +71,34 @@ struct SearchView: View {
                 SearchRecentResultsView(results: history,
                                         onSelect: { viewModel.viewDetail(of: $0) },
                                         onRemove: { viewModel.removeFromHistory($0) },
-                                        onClearResults: viewModel.removeAllSearchHistory)
+                                        onClearResults: { viewModel.removeAllSearchHistory() })
 
             case let .noResults(query):
-                switch viewModel.vaultSelection {
-                case .all:
+                if case let .all(vaultSelection) = viewModel.searchMode {
+                    switch vaultSelection {
+                    case .all:
+                        NoSearchResultsInAllVaultView(query: query)
+                    case let .precise(vault):
+                        NoSearchResultsInPreciseVaultView(query: query,
+                                                          vaultName: vault.name,
+                                                          action: { viewModel.searchInAllVaults() })
+                    case .trash:
+                        NoSearchResultsInTrashView(query: query)
+                    }
+                } else {
                     NoSearchResultsInAllVaultView(query: query)
-                case let .precise(vault):
-                    NoSearchResultsInPreciseVaultView(query: query,
-                                                      vaultName: vault.name,
-                                                      action: viewModel.searchInAllVaults)
-                case .trash:
-                    NoSearchResultsInTrashView(query: query)
                 }
-
             case let .results(itemCount, results):
                 SearchResultsView(selectedType: $viewModel.selectedType,
                                   selectedSortType: $viewModel.selectedSortType,
                                   itemContextMenuHandler: viewModel.itemContextMenuHandler,
                                   itemCount: itemCount,
                                   results: results,
-                                  isTrash: viewModel.vaultSelection == .trash,
+                                  isTrash: viewModel.isTrash,
                                   safeAreaInsets: safeAreaInsets,
                                   onScroll: { isFocusedOnSearchBar = false },
                                   onSelectItem: { viewModel.viewDetail(of: $0) },
-                                  onSelectSortType: viewModel.presentSortTypeList)
+                                  onSelectSortType: { viewModel.presentSortTypeList() })
 
             default:
                 // Impossible cases

@@ -19,10 +19,13 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import Entities
+import Factory
 import SwiftUI
 
+@MainActor
 final class SearchResultsViewModel: ObservableObject {
-    @Published var itemToBePermanentlyDeleted: ItemTypeIdentifiable? {
+    @Published var itemToBePermanentlyDeleted: (any ItemTypeIdentifiable)? {
         didSet {
             if itemToBePermanentlyDeleted != nil {
                 showingPermanentDeletionAlert = true
@@ -31,6 +34,9 @@ final class SearchResultsViewModel: ObservableObject {
     }
 
     @Published var showingPermanentDeletionAlert = false
+
+    private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
+    private let canEditItem = resolve(\SharedUseCasesContainer.canEditItem)
 
     let itemContextMenuHandler: ItemContextMenuHandler
     let itemCount: ItemCount
@@ -46,9 +52,17 @@ final class SearchResultsViewModel: ObservableObject {
         self.results = results
         self.isTrash = isTrash
     }
+}
 
+// MARK: Public APIs
+
+extension SearchResultsViewModel {
     func permanentlyDelete() {
         guard let itemToBePermanentlyDeleted else { return }
         itemContextMenuHandler.deletePermanently(itemToBePermanentlyDeleted)
+    }
+
+    func isEditable(_ item: any ItemIdentifiable) -> Bool {
+        canEditItem(vaults: vaultsManager.getAllVaults(), item: item)
     }
 }

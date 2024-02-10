@@ -22,13 +22,15 @@ import Client
 import Combine
 import Core
 import Entities
+import Factory
 import SwiftUI
 
+@MainActor
 protocol AliasCreationLiteInfoDelegate: AnyObject {
     func aliasLiteCreationInfo(_ info: AliasCreationLiteInfo)
 }
 
-struct AliasCreationLiteInfo {
+struct AliasCreationLiteInfo: Sendable {
     let prefix: String
     let suffix: Suffix
     let mailboxes: [Mailbox]
@@ -36,12 +38,7 @@ struct AliasCreationLiteInfo {
     var aliasAddress: String { prefix + suffix.suffix }
 }
 
-protocol CreateAliasLiteViewModelDelegate: AnyObject {
-    func createAliasLiteViewModelWantsToSelectMailboxes(_ mailboxSelection: MailboxSelection)
-    func createAliasLiteViewModelWantsToSelectSuffix(_ suffixSelection: SuffixSelection)
-    func createAliasLiteViewModelWantsToUpgrade()
-}
-
+@MainActor
 final class CreateAliasLiteViewModel: ObservableObject {
     @Published var prefix = ""
     @Published private(set) var canCreateAlias: Bool
@@ -50,17 +47,10 @@ final class CreateAliasLiteViewModel: ObservableObject {
 
     let suffixSelection: SuffixSelection
     let mailboxSelection: MailboxSelection
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let validateAliasPrefix = resolve(\SharedUseCasesContainer.validateAliasPrefix)
 
     weak var aliasCreationDelegate: AliasCreationLiteInfoDelegate?
-    weak var delegate: CreateAliasLiteViewModelDelegate?
-
-    var suffix: String {
-        suffixSelection.selectedSuffix?.suffix ?? ""
-    }
-
-    var mailboxes: String {
-        mailboxSelection.selectedMailboxes.map(\.email).joined(separator: "\n")
-    }
 
     init(options: AliasOptions, creationInfo: AliasCreationLiteInfo) {
         canCreateAlias = options.canCreateAlias
@@ -77,7 +67,8 @@ final class CreateAliasLiteViewModel: ObservableObject {
             .projectedValue
             .dropFirst(3) // TextField is edited 3 times when view is loaded
             .sink { [weak self] _ in
-                self?.validatePrefix()
+                guard let self else { return }
+                validatePrefix()
             }
             .store(in: &cancellables)
     }
@@ -88,7 +79,7 @@ final class CreateAliasLiteViewModel: ObservableObject {
 private extension CreateAliasLiteViewModel {
     func validatePrefix() {
         do {
-            try AliasPrefixValidator.validate(prefix: prefix)
+            try validateAliasPrefix(prefix: prefix)
             prefixError = nil
         } catch {
             prefixError = error as? AliasPrefixError
@@ -108,14 +99,14 @@ extension CreateAliasLiteViewModel {
     }
 
     func showMailboxSelection() {
-        delegate?.createAliasLiteViewModelWantsToSelectMailboxes(mailboxSelection)
+        router.present(for: .mailboxView(mailboxSelection, .create))
     }
 
     func showSuffixSelection() {
-        delegate?.createAliasLiteViewModelWantsToSelectSuffix(suffixSelection)
+        router.present(for: .suffixView(suffixSelection))
     }
 
     func upgrade() {
-        delegate?.createAliasLiteViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
     }
 }

@@ -21,6 +21,8 @@
 import Client
 import Combine
 import Core
+import DocScanner
+import Entities
 import SwiftUI
 
 final class CreateEditCreditCardViewModel: BaseCreateEditItemViewModel, DeinitPrintable, ObservableObject {
@@ -37,7 +39,7 @@ final class CreateEditCreditCardViewModel: BaseCreateEditItemViewModel, DeinitPr
 
     override func itemContentType() -> ItemContentType { .creditCard }
 
-    override var isSaveable: Bool { !title.isEmpty }
+    var isSaveable: Bool { !title.isEmpty }
 
     var shouldUpgrade: Bool {
         // Free users can not create more credit cards but can only update
@@ -61,7 +63,7 @@ final class CreateEditCreditCardViewModel: BaseCreateEditItemViewModel, DeinitPr
             .map(transformAndLimit)
             .sink { [weak self] formattedCardNumber in
                 guard let self else { return }
-                self.cardNumber = formattedCardNumber
+                cardNumber = formattedCardNumber
             }
             .store(in: &cancellables)
 
@@ -72,23 +74,25 @@ final class CreateEditCreditCardViewModel: BaseCreateEditItemViewModel, DeinitPr
             .map { $0.prefix(4).toString }
             .sink { [weak self] formattedVerificationNumber in
                 guard let self else { return }
-                self.verificationNumber = formattedVerificationNumber
+                verificationNumber = formattedVerificationNumber
             }
             .store(in: &cancellables)
 
-        Publishers
-            .CombineLatest($title, $cardholderName)
-            .combineLatest($cardNumber)
-            .combineLatest($verificationNumber)
-            .combineLatest($pin)
-            .combineLatest($month)
-            .combineLatest($year)
-            .combineLatest($note)
-            .dropFirst(mode.isEditMode ? 1 : 3)
-            .sink(receiveValue: { [weak self] _ in
-                self?.didEditSomething = true
-            })
+        scanResponsePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { _ in } receiveValue: { [weak self] result in
+                guard let self, let result else { return }
+                if let cardDetails = result as? CardDetails {
+                    parse(cardDetails: cardDetails)
+                } else {
+                    assertionFailure("Expecting CardDetails as result")
+                }
+            }
             .store(in: &cancellables)
+    }
+
+    var interpretor: ScanInterpreting {
+        ScanInterpreter(type: .card)
     }
 
     override func generateItemContent() -> ItemContentProtobuf {
@@ -127,5 +131,31 @@ final class CreateEditCreditCardViewModel: BaseCreateEditItemViewModel, DeinitPr
 private extension CreateEditCreditCardViewModel {
     func transformAndLimit(newNumber: String) -> String {
         newNumber.spacesRemoved.prefix(19).toString.toCreditCardNumber()
+    }
+
+    func parse(cardDetails: CardDetails) {
+        if cardDetails.type != .unknown {
+            title = cardDetails.type.rawValue
+        }
+        cardholderName = cardDetails.name ?? ""
+        cardNumber = cardDetails.number ?? ""
+        verificationNumber = cardDetails.cvvNumber ?? ""
+
+        // expiryDate format "MM/YY"
+        if let expiryDate = cardDetails.expiryDate {
+            let dateComponents = expiryDate.components(separatedBy: "/")
+            if dateComponents.count == 2 {
+                month = Int(dateComponents.first ?? "")
+
+                if let year = Int(dateComponents.last ?? "") {
+                    if year < 100 {
+                        // 2-digit year, assume that it's after the year of 2000
+                        self.year = 2_000 + year
+                    } else {
+                        self.year = year
+                    }
+                }
+            }
+        }
     }
 }

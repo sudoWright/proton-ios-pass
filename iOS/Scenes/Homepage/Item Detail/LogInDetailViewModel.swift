@@ -21,11 +21,14 @@
 import Client
 import Combine
 import Core
+import DesignSystem
+import Entities
 import Factory
+import Macro
 import SwiftUI
-import UIComponents
 import UIKit
 
+@MainActor
 protocol LogInDetailViewModelDelegate: AnyObject {
     func logInDetailViewModelWantsToShowAliasDetail(_ itemContent: ItemContent)
 }
@@ -43,29 +46,30 @@ final class LogInDetailViewModel: BaseItemDetailViewModel, DeinitPrintable {
     @Published private(set) var username = ""
     @Published private(set) var urls: [String] = []
     @Published private(set) var password = ""
+    @Published private(set) var totpUri = ""
     @Published private(set) var note = ""
+    @Published private(set) var passwordStrength: PasswordStrength?
     @Published private(set) var totpTokenState = TOTPTokenState.loading
-    @Published private(set) var totpManager: TOTPManager
     @Published private var aliasItem: SymmetricallyEncryptedItem?
 
     var isAlias: Bool { aliasItem != nil }
 
-    private var cancellables = Set<AnyCancellable>()
+    private let getPasswordStrength = resolve(\SharedUseCasesContainer.getPasswordStrength)
+
+    let totpManager = resolve(\ServiceContainer.totpManager)
+
     weak var logInDetailViewModelDelegate: LogInDetailViewModelDelegate?
 
-    var coloredPasswordTexts: [Text] { PasswordUtils.generateColoredPasswords(password) }
+    var coloredPassword: AttributedString {
+        PasswordUtils.generateColoredPassword(password)
+    }
 
     override init(isShownAsSheet: Bool,
                   itemContent: ItemContent,
-                  upgradeChecker: UpgradeCheckerProtocol,
-                  vault: Vault?) {
-        let logManager = resolve(\SharedToolingContainer.logManager)
-        totpManager = .init(logManager: logManager)
+                  upgradeChecker: UpgradeCheckerProtocol) {
         super.init(isShownAsSheet: isShownAsSheet,
                    itemContent: itemContent,
-                   upgradeChecker: upgradeChecker,
-                   vault: vault)
-        totpManager.attach(to: self, storeIn: &cancellables)
+                   upgradeChecker: upgradeChecker)
     }
 
     override func bindValues() {
@@ -74,12 +78,14 @@ final class LogInDetailViewModel: BaseItemDetailViewModel, DeinitPrintable {
             note = itemContent.note
             username = data.username
             password = data.password
+            passwordStrength = getPasswordStrength(password: password)
             urls = data.urls
+            totpUri = data.totpUri
             totpManager.bind(uri: data.totpUri)
             getAliasItem(username: data.username)
 
             if !data.totpUri.isEmpty {
-                checkTotpState(createTime: itemContent.item.createTime)
+                checkTotpState()
             } else {
                 totpTokenState = .allowed
             }
@@ -99,12 +105,12 @@ private extension LogInDetailViewModel {
                 self.aliasItem = try await self.itemRepository.getAliasItem(email: username)
             } catch {
                 self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func checkTotpState(createTime: Int64) {
+    func checkTotpState() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -115,7 +121,7 @@ private extension LogInDetailViewModel {
                 }
             } catch {
                 self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -125,36 +131,33 @@ private extension LogInDetailViewModel {
 
 extension LogInDetailViewModel {
     func copyUsername() {
-        copyToClipboard(text: username, message: "Username copied")
+        copyToClipboard(text: username, message: #localized("Username copied"))
     }
 
     func copyPassword() {
         guard !password.isEmpty else { return }
-        copyToClipboard(text: password, message: "Password copied")
+        copyToClipboard(text: password, message: #localized("Password copied"))
     }
 
-    func copyTotpCode() {
-        if let code = totpManager.totpData?.code {
-            copyToClipboard(text: code, message: "Two Factor Authentication code copied")
-        }
+    func copyTotpToken(_ token: String) {
+        copyToClipboard(text: token, message: #localized("TOTP copied"))
     }
 
     func showLargePassword() {
-        showLarge(password)
+        showLarge(.password(password))
     }
 
     func showAliasDetail() {
         guard let aliasItem else { return }
         do {
-            let symmetricKey = itemRepository.symmetricKey
-            let itemContent = try aliasItem.getItemContent(symmetricKey: symmetricKey)
+            let itemContent = try aliasItem.getItemContent(symmetricKey: getSymmetricKey())
             logInDetailViewModelDelegate?.logInDetailViewModelWantsToShowAliasDetail(itemContent)
         } catch {
-            delegate?.itemDetailViewModelDidEncounter(error: error)
+            router.display(element: .displayErrorBanner(error))
         }
     }
 
     func openUrl(_ urlString: String) {
-        delegate?.itemDetailViewModelWantsToOpen(urlString: urlString)
+        router.navigate(to: .urlPage(urlString: urlString))
     }
 }

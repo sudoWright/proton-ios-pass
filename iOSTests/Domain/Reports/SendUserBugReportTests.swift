@@ -19,6 +19,9 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import XCTest
+import UseCases
+import UseCasesMocks
+import ClientMocks
 @testable import Proton_Pass
 
 final class SendUserBugReportTests: XCTestCase {

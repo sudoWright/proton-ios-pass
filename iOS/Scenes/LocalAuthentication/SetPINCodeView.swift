@@ -19,19 +19,17 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import DesignSystem
 import Factory
-import ProtonCore_UIFoundations
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SetPINCodeView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isFocused: Bool
-    @StateObject private var viewModel: SetPINCodeViewModel
+    @StateObject private var viewModel: SetPINCodeViewModel = .init()
 
-    init(onSet: @escaping (String) -> Void) {
-        _viewModel = .init(wrappedValue: .init(onSet: onSet))
-    }
+    init() {}
 
     var body: some View {
         NavigationView {
@@ -66,13 +64,7 @@ struct SetPINCodeView: View {
             .animation(.default, value: viewModel.error)
             .toolbar { toolbarContent }
             .onAppear {
-                if #available(iOS 16, *) {
-                    isFocused = true
-                } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                        isFocused = true
-                    }
-                }
+                isFocused = true
             }
         }
         .navigationViewStyle(.stack)
@@ -99,7 +91,7 @@ private extension SetPINCodeView {
                                         backgroundColor: PassColor.interactionNormMajor1,
                                         disableBackgroundColor: PassColor.interactionNormMinor1,
                                         disabled: viewModel.actionNotAllowed,
-                                        action: viewModel.action)
+                                        action: { viewModel.action() })
         }
     }
 }

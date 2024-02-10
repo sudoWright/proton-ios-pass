@@ -18,11 +18,15 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Factory
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct GeneratePasswordView: View {
+    private var theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: GeneratePasswordViewModel
 
@@ -33,11 +37,15 @@ struct GeneratePasswordView: View {
     var body: some View {
         NavigationView {
             VStack {
-                Text(viewModel.texts)
-                    .font(.title3)
+                Text(viewModel.coloredPassword)
+                    .font(.title3.monospaced())
                     .minimumScaleFactor(0.5)
                     .frame(maxHeight: .infinity, alignment: .center)
                     .animationsDisabled()
+
+                Label(viewModel.strength.title, systemImage: viewModel.strength.iconName)
+                    .font(.headline)
+                    .foregroundStyle(viewModel.strength.color)
 
                 passwordTypeRow
                 PassDivider()
@@ -47,14 +55,17 @@ struct GeneratePasswordView: View {
                     characterCountRow
                     PassDivider()
 
-                    toggle(title: "Special characters", isOn: $viewModel.hasSpecialCharacters)
+                    toggle(title: #localized("Special characters"),
+                           isOn: $viewModel.hasSpecialCharacters)
                     PassDivider()
 
                     if viewModel.isShowingAdvancedOptions {
-                        toggle(title: "Capital letters", isOn: $viewModel.hasCapitalCharacters)
+                        toggle(title: #localized("Capital letters"),
+                               isOn: $viewModel.hasCapitalCharacters)
                         PassDivider()
 
-                        toggle(title: "Include numbers", isOn: $viewModel.hasNumberCharacters)
+                        toggle(title: #localized("Include numbers"),
+                               isOn: $viewModel.hasNumberCharacters)
                         PassDivider()
                     } else {
                         advancedOptionsRow
@@ -70,7 +81,8 @@ struct GeneratePasswordView: View {
                         capitalizingWordsRow
                         PassDivider()
 
-                        toggle(title: "Include numbers", isOn: $viewModel.includingNumbers)
+                        toggle(title: #localized("Include numbers"),
+                               isOn: $viewModel.includingNumbers)
                         PassDivider()
                     } else {
                         capitalizingWordsRow
@@ -111,6 +123,7 @@ struct GeneratePasswordView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .theme(theme)
     }
 
     private var passwordTypeRow: some View {
@@ -155,7 +168,7 @@ struct GeneratePasswordView: View {
 
     private var ctaButtons: some View {
         HStack {
-            CapsuleTextButton(title: "Cancel",
+            CapsuleTextButton(title: #localized("Cancel"),
                               titleColor: PassColor.textWeak,
                               backgroundColor: PassColor.textDisabled,
                               height: 44,
@@ -212,7 +225,7 @@ struct GeneratePasswordView: View {
     }
 
     private var capitalizingWordsRow: some View {
-        toggle(title: "Capitalise", isOn: $viewModel.capitalizingWords)
+        toggle(title: #localized("Capitalize"), isOn: $viewModel.capitalizingWords)
     }
 
     private var wordSeparatorRow: some View {

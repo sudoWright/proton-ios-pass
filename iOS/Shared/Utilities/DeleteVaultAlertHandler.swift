@@ -20,12 +20,16 @@
 
 import Client
 import Core
+import Entities
+import Macro
 import UIKit
 
+@MainActor
 protocol DeleteVaultAlertHandlerDelegate: AnyObject {
     func confirmDelete(vault: Vault)
 }
 
+@MainActor
 final class DeleteVaultAlertHandler: DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -42,19 +46,21 @@ final class DeleteVaultAlertHandler: DeinitPrintable {
     }
 
     func showAlert() {
-        let alert = UIAlertController(title: "Delete vault?",
+        let alert = UIAlertController(title: #localized("Delete vault?"),
                                       // swiftlint:disable:next line_length
-                                      message: "This will permanently delete the vault \"\(vault.name)\" and all its contents. Enter the vault name to confirm deletion.",
+                                      message: #localized("This will permanently delete the vault « %@ » and all its contents. Enter the vault name to confirm deletion.",
+                                                          vault.name),
                                       preferredStyle: .alert)
         alert.addTextField { [vault] textField in
-            textField.placeholder = "Vault name"
+            textField.placeholder = #localized("Vault name")
             let action = UIAction { [vault] _ in
                 alert.actions.first?.isEnabled = textField.text == vault.name
             }
             textField.addAction(action, for: .editingChanged)
         }
 
-        let deleteAction = UIAlertAction(title: "Delete", style: .destructive) { [vault, delegate] _ in
+        let deleteAction = UIAlertAction(title: #localized("Delete"),
+                                         style: .destructive) { [vault, delegate] _ in
             if alert.textFields?.first?.text == vault.name {
                 delegate.confirmDelete(vault: vault)
             }
@@ -62,7 +68,7 @@ final class DeleteVaultAlertHandler: DeinitPrintable {
         deleteAction.isEnabled = false
         alert.addAction(deleteAction)
 
-        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
+        let cancelAction = UIAlertAction(title: #localized("Cancel"), style: .cancel)
         alert.addAction(cancelAction)
 
         rootViewController.present(alert, animated: true)

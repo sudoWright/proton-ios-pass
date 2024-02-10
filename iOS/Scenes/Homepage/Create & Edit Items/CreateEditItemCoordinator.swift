@@ -20,28 +20,31 @@
 
 import Client
 import Core
+import Entities
 import Factory
-import ProtonCore_Login
+import ProtonCoreLogin
 import SwiftUI
 import UIKit
 
+@MainActor
 protocol CreateEditItemCoordinatorDelegate: AnyObject {
-    func createEditItemCoordinatorWantsWordProvider() async -> WordProviderProtocol?
     func createEditItemCoordinatorWantsToPresent(view: any View, dismissable: Bool)
 }
 
 typealias CreateEditItemDelegates =
-    GeneratePasswordViewModelDelegate &
-    GeneratePasswordCoordinatorDelegate &
     CreateEditItemViewModelDelegate &
     CreateEditLoginViewModelDelegate &
-    CreateEditAliasViewModelDelegate
+    GeneratePasswordCoordinatorDelegate &
+    GeneratePasswordViewModelDelegate
 
+@MainActor
 final class CreateEditItemCoordinator: DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private let upgradeChecker = resolve(\SharedServiceContainer.upgradeChecker)
     private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
+    private let getCurrentSelectedShareId = resolve(\SharedUseCasesContainer.getCurrentSelectedShareId)
+
     private weak var createEditItemDelegates: CreateEditItemDelegates?
 
     private var currentViewModel: BaseCreateEditItemViewModel?
@@ -76,11 +79,12 @@ extension CreateEditItemCoordinator {
         }
     }
 
-    func presentCreateItemView(for itemType: ItemType) throws {
-        guard let shareId = vaultsManager.getSelectedShareId() else { return }
+    @MainActor
+    func presentCreateItemView(for itemType: ItemType) async throws {
+        guard let shareId = await getCurrentSelectedShareId() else { return }
         switch itemType {
         case .login:
-            let logInType = ItemCreationType.login(title: nil, url: nil, autofill: false)
+            let logInType = ItemCreationType.login(title: nil, url: nil, note: nil, autofill: false)
             try presentCreateEditLoginView(mode: .create(shareId: shareId, type: logInType))
         case .alias:
             try presentCreateEditAliasView(mode: .create(shareId: shareId, type: .alias))
@@ -123,7 +127,6 @@ private extension CreateEditItemCoordinator {
                                                      upgradeChecker: upgradeChecker,
                                                      vaults: vaultsManager.getAllVaults())
         viewModel.delegate = createEditItemDelegates
-        viewModel.createEditAliasViewModelDelegate = createEditItemDelegates
         let view = CreateEditAliasView(viewModel: viewModel)
         present(view, dismissable: false)
         currentViewModel = viewModel
@@ -152,19 +155,15 @@ private extension CreateEditItemCoordinator {
     func presentGeneratePasswordView(mode: GeneratePasswordViewMode,
                                      generatePasswordViewModelDelegate: GeneratePasswordViewModelDelegate?) {
         assert(delegate != nil, "delegate is not set")
-        guard let delegate else { return }
+        guard delegate != nil else { return }
         Task { @MainActor [weak self] in
-            guard let wordProvider = await delegate.createEditItemCoordinatorWantsWordProvider() else {
-                assertionFailure("wordProvider should not be null")
-                return
-            }
+            guard let self else { return }
             let coordinator =
                 GeneratePasswordCoordinator(generatePasswordViewModelDelegate: generatePasswordViewModelDelegate,
-                                            mode: mode,
-                                            wordProvider: wordProvider)
-            coordinator.delegate = self?.createEditItemDelegates
+                                            mode: mode)
+            coordinator.delegate = createEditItemDelegates
             coordinator.start()
-            self?.generatePasswordCoordinator = coordinator
+            generatePasswordCoordinator = coordinator
         }
     }
 }

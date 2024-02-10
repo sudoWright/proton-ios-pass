@@ -20,7 +20,9 @@
 
 import Combine
 import Core
+import Entities
 import Factory
+import Foundation
 
 private let kMaxAttemptCount = 3
 
@@ -30,6 +32,7 @@ enum LocalAuthenticationState: Equatable {
     case lastAttempt
 }
 
+@MainActor
 final class LocalAuthenticationViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -44,8 +47,6 @@ final class LocalAuthenticationViewModel: ObservableObject, DeinitPrintable {
     let onAuth: () -> Void
 
     @Published private(set) var state: LocalAuthenticationState = .noAttempts
-    /// Only applicable for biometric authentication
-    @Published private(set) var error: Error?
 
     var delayedTime: DispatchTimeInterval {
         delayed ? .milliseconds(200) : .milliseconds(0)
@@ -70,7 +71,8 @@ final class LocalAuthenticationViewModel: ObservableObject, DeinitPrintable {
         preferences.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateStateBasedOnFailedAttemptCount()
+                guard let self else { return }
+                updateStateBasedOnFailedAttemptCount()
             }
             .store(in: &cancellables)
     }
@@ -79,14 +81,17 @@ final class LocalAuthenticationViewModel: ObservableObject, DeinitPrintable {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let authenticated = try await self.authenticate(policy: self.preferences.localAuthenticationPolicy)
+                let authenticated = try await authenticate(policy: self.preferences.localAuthenticationPolicy)
                 if authenticated {
-                    self.recordSuccess()
+                    recordSuccess()
                 } else {
-                    self.recordFailure(nil)
+                    recordFailure(nil)
                 }
+            } catch PassError.biometricChange {
+                /// We need to logout the user as we detected that the biometric settings have changed
+                onFailure()
             } catch {
-                self.recordFailure(error)
+                recordFailure(error)
             }
         }
     }

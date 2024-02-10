@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SettingsView: View {
     @StateObject var viewModel: SettingsViewModel
@@ -41,14 +43,11 @@ struct SettingsView: View {
 
     private var realBody: some View {
         ScrollView {
-            VStack(spacing: kItemDetailSectionPadding) {
+            VStack(spacing: DesignConstant.sectionPadding) {
                 untitledSection
+
                 clipboardSection
                     .padding(.vertical)
-                if let primaryVault = viewModel.vaultsManager.getPrimaryVault() {
-                    primaryVaultSection(vault: primaryVault)
-                        .padding(.bottom)
-                }
 
                 logsSection
 
@@ -72,25 +71,27 @@ struct SettingsView: View {
             CircleButton(icon: viewModel.isShownAsSheet ? IconProvider.chevronDown : IconProvider.chevronLeft,
                          iconColor: PassColor.interactionNormMajor2,
                          backgroundColor: PassColor.interactionNormMinor1,
-                         action: viewModel.goBack)
+                         action: { viewModel.goBack() })
         }
     }
 
     private var untitledSection: some View {
         VStack(spacing: 0) {
-            OptionRow(action: viewModel.editDefaultBrowser,
-                      title: "Default browser",
-                      height: .tall,
-                      content: {
-                          Text(viewModel.selectedBrowser.description)
-                              .foregroundColor(Color(uiColor: PassColor.textNorm))
-                      },
-                      trailing: { ChevronRight() })
+            if !ProcessInfo.processInfo.isiOSAppOnMac {
+                OptionRow(action: { viewModel.editDefaultBrowser() },
+                          title: #localized("Default browser"),
+                          height: .tall,
+                          content: {
+                              Text(viewModel.selectedBrowser.description)
+                                  .foregroundColor(Color(uiColor: PassColor.textNorm))
+                          },
+                          trailing: { ChevronRight() })
 
-            PassSectionDivider()
+                PassSectionDivider()
+            }
 
-            OptionRow(action: viewModel.editTheme,
-                      title: "Theme",
+            OptionRow(action: { viewModel.editTheme() },
+                      title: #localized("Theme"),
                       height: .tall,
                       content: {
                           Label(title: {
@@ -119,14 +120,14 @@ struct SettingsView: View {
     }
 
     private var clipboardSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
+        VStack(spacing: DesignConstant.sectionPadding) {
             Text("Clipboard")
                 .sectionHeaderText()
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(spacing: 0) {
-                OptionRow(action: viewModel.editClipboardExpiration,
-                          title: "Clear clipboard",
+                OptionRow(action: { viewModel.editClipboardExpiration() },
+                          title: #localized("Clear clipboard"),
                           height: .tall,
                           content: {
                               Text(viewModel.selectedClipboardExpiration.description)
@@ -148,47 +149,25 @@ struct SettingsView: View {
         }
     }
 
-    private func primaryVaultSection(vault: Vault) -> some View {
-        VStack(spacing: 0) {
-            Text("Vaults")
-                .sectionHeaderText()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, kItemDetailSectionPadding)
-
-            OptionRow(action: { viewModel.edit(primaryVault: vault) },
-                      title: "Primary vault",
-                      height: .tall,
-                      content: { Text(vault.name).foregroundColor(Color(uiColor: PassColor.textNorm)) },
-                      leading: { VaultThumbnail(vault: vault) },
-                      trailing: { ChevronRight() })
-                .roundedEditableSection()
-
-            Text("You can not delete a primary vault")
-                .sectionTitleText()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, kItemDetailSectionPadding / 2)
-        }
-    }
-
     private var logsSection: some View {
         VStack(spacing: 0) {
             Text("Logs")
                 .sectionHeaderText()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, kItemDetailSectionPadding)
+                .padding(.bottom, DesignConstant.sectionPadding)
 
             VStack(spacing: 0) {
                 TextOptionRow(title: PassModule.hostApp.logTitle,
-                              action: viewModel.viewHostAppLogs)
+                              action: { viewModel.viewHostAppLogs() })
 
                 PassSectionDivider()
 
                 TextOptionRow(title: PassModule.autoFillExtension.logTitle,
-                              action: viewModel.viewAutoFillExensionLogs)
+                              action: { viewModel.viewAutoFillExensionLogs() })
             }
             .roundedEditableSection()
 
-            OptionRow(action: viewModel.clearLogs,
+            OptionRow(action: { viewModel.clearLogs() },
                       height: .medium,
                       content: {
                           Text("Clear all logs")
@@ -200,7 +179,7 @@ struct SettingsView: View {
                                        backgroundColor: PassColor.interactionNormMinor1)
                       })
                       .roundedEditableSection()
-                      .padding(.top, kItemDetailSectionPadding / 2)
+                      .padding(.top, DesignConstant.sectionPadding / 2)
         }
     }
 
@@ -209,9 +188,9 @@ struct SettingsView: View {
             Text("Application")
                 .sectionHeaderText()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, kItemDetailSectionPadding)
+                .padding(.bottom, DesignConstant.sectionPadding)
 
-            OptionRow(action: viewModel.forceSync,
+            OptionRow(action: { viewModel.forceSync() },
                       height: .medium,
                       content: {
                           Text("Force synchronization")
@@ -227,7 +206,7 @@ struct SettingsView: View {
             Text("Download all your items again to make sure you are in sync")
                 .sectionTitleText()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, kItemDetailSectionPadding / 2)
+                .padding(.top, DesignConstant.sectionPadding / 2)
         }
     }
 }

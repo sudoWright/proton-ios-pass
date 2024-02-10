@@ -18,11 +18,14 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import Factory
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditNoteView: View {
+    private let theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CreateEditNoteViewModel
     @FocusState private var focusedField: Field?
@@ -48,24 +51,24 @@ struct CreateEditNoteView: View {
                                                    selectedVault: viewModel.selectedVault,
                                                    itemContentType: viewModel.itemContentType(),
                                                    isEditMode: viewModel.mode.isEditMode,
-                                                   onChangeVault: viewModel.changeVault)
+                                                   onChangeVault: { viewModel.changeVault() })
                             .padding(.bottom, 18)
 
                         TextEditorWithPlaceholder(text: $viewModel.title,
                                                   focusedField: $focusedField,
                                                   field: .title,
-                                                  placeholder: "Untitled",
+                                                  placeholder: #localized("Untitled"),
                                                   font: .title,
                                                   fontWeight: .bold,
                                                   onSubmit: { focusedField = .content })
 
-                        Text("")
+                        Text(verbatim: "")
                             .id(dummyId)
 
                         TextEditorWithPlaceholder(text: $viewModel.note,
                                                   focusedField: $focusedField,
                                                   field: .content,
-                                                  placeholder: "Note")
+                                                  placeholder: #localized("Note"))
                     }
                     .padding()
                 }
@@ -97,25 +100,20 @@ struct CreateEditNoteView: View {
                                           }
                                       },
                                       onUpgrade: { /* Not applicable */ },
-                                      onSave: viewModel.save)
+                                      onScan: { viewModel.openScanner() },
+                                      onSave: { viewModel.save() })
             }
         }
         .navigationViewStyle(.stack)
-        // Remove when dropping iOS 15
-        .accentColor(Color(uiColor: viewModel.itemContentType().normMajor1Color))
-        .tint(Color(uiColor: viewModel.itemContentType().normMajor1Color))
+        .theme(theme)
+        .tint(viewModel.itemContentType().normMajor1Color.toColor)
         .obsoleteItemAlert(isPresented: $viewModel.isObsolete, onAction: dismiss.callAsFunction)
         .discardChangesAlert(isPresented: $isShowingDiscardAlert, onDiscard: dismiss.callAsFunction)
+        .scannerSheet(isPresented: $viewModel.isShowingScanner,
+                      interpreter: viewModel.interpretor,
+                      resultStream: viewModel.scanResponsePublisher)
         .onFirstAppear {
-            if #available(iOS 16, *) {
-                focusedField = .title
-            } else {
-                // 0.5 second delay is purely heuristic.
-                // Values lower than 0.5 simply don't work.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    focusedField = .title
-                }
-            }
+            focusedField = .title
         }
     }
 }

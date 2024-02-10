@@ -19,17 +19,21 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct ItemDetailTitleView: View {
     let itemContent: ItemContent
     let vault: Vault?
+    let shouldShowVault: Bool
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            ItemSquircleThumbnail(data: itemContent.thumbnailData(), size: .large)
+        HStack(spacing: DesignConstant.sectionPadding) {
+            ItemSquircleThumbnail(data: itemContent.thumbnailData(),
+                                  pinned: itemContent.item.pinned,
+                                  size: .large)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(itemContent.name)
@@ -40,10 +44,10 @@ struct ItemDetailTitleView: View {
                     .foregroundColor(Color(uiColor: PassColor.textNorm))
 
                 if let vault {
-                    if !vault.shared {
-                        VaultLabel(vault: vault)
-                    } else {
+                    if vault.shared {
                         VaultButton(vault: vault)
+                    } else if shouldShowVault {
+                        VaultLabel(vault: vault)
                     }
                 }
             }

@@ -20,6 +20,7 @@
 
 import Client
 import Core
+import Entities
 import SwiftUI
 
 private extension KeychainStorage {
@@ -44,13 +45,10 @@ private extension KeychainStorage {
 /// Use `@AppStorage` for trivial data that do not need to survive reinstallations
 /// Consider using this property wrapper for data that can be lost without any security impacts
 /// (theme settings, selected browser...)
-final class Preferences: ObservableObject, DeinitPrintable {
+final class Preferences: ObservableObject, DeinitPrintable, PreferencesProtocol {
     deinit { print(deinitMessage) }
 
-    init() {
-        migrateToKeychain()
-        migrateToPINSupport()
-    }
+    init() {}
 
     // MARK: Non sensitive prefs
 
@@ -58,7 +56,7 @@ final class Preferences: ObservableObject, DeinitPrintable {
     var quickTypeBar = true
 
     @AppStorage(Key.automaticallyCopyTotpCode.rawValue, store: kSharedUserDefaults)
-    var automaticallyCopyTotpCode = false
+    var automaticallyCopyTotpCode = true
 
     @AppStorage(Key.onboarded.rawValue, store: kSharedUserDefaults)
     var onboarded = false
@@ -67,7 +65,7 @@ final class Preferences: ObservableObject, DeinitPrintable {
     var theme: Theme = .dark
 
     @AppStorage(Key.browser.rawValue, store: kSharedUserDefaults)
-    var browser: Browser = .safari
+    var browser: Browser = .systemDefault
 
     @AppStorage(Key.telemetryThreshold.rawValue, store: kSharedUserDefaults)
     var telemetryThreshold: TimeInterval?
@@ -81,11 +79,11 @@ final class Preferences: ObservableObject, DeinitPrintable {
     @AppStorage(Key.createdItemsCount.rawValue, store: kSharedUserDefaults)
     var createdItemsCount = 0
 
-    @AppStorage(Key.didMigrateToKeychain.rawValue, store: kSharedUserDefaults)
-    var didMigrateToKeychain = false
+    @AppStorage(Key.didMigrateToSeparatedCredentials.rawValue, store: kSharedUserDefaults)
+    var didMigrateToSeparatedCredentials = false
 
-    @AppStorage(Key.didMigrateToPINSupport.rawValue, store: kSharedUserDefaults)
-    var didMigrateToPINSupport = false
+    @AppStorage(Key.didMigrateCredentialsToShareExtension.rawValue, store: kSharedUserDefaults)
+    var didMigrateCredentialsToShareExtension = false
 
     // MARK: Sensitive prefs
 
@@ -104,7 +102,7 @@ final class Preferences: ObservableObject, DeinitPrintable {
     @KeychainStorage(key: Key.appLockTime, defaultValue: .twoMinutes)
     var appLockTime: AppLockTime
 
-    @KeychainStorage(key: Key.clipboardExpiration, defaultValue: .oneMinute)
+    @KeychainStorage(key: Key.clipboardExpiration, defaultValue: .twoMinutes)
     var clipboardExpiration: ClipboardExpiration
 
     @KeychainStorage(key: Key.shareClipboard, defaultValue: false)
@@ -114,17 +112,18 @@ final class Preferences: ObservableObject, DeinitPrintable {
     @KeychainStorage(key: Key.dismissedBannerIds, defaultValue: [])
     var dismissedBannerIds: [String]
 
+    @MainActor
     func reset(isTests: Bool = false) {
         quickTypeBar = true
-        automaticallyCopyTotpCode = false
+        automaticallyCopyTotpCode = true
         failedAttemptCount = 0
         localAuthenticationMethod = .none
         fallbackToPasscode = true
         pinCode = nil
         appLockTime = .twoMinutes
         theme = .dark
-        browser = .safari
-        clipboardExpiration = .oneMinute
+        browser = .systemDefault
+        clipboardExpiration = .twoMinutes
         shareClipboard = false
         telemetryThreshold = nil
         displayFavIcons = true
@@ -134,42 +133,6 @@ final class Preferences: ObservableObject, DeinitPrintable {
             onboarded = false
             createdItemsCount = 0
         }
-    }
-}
-
-private extension Preferences {
-    func migrateToKeychain() {
-        guard !didMigrateToKeychain else { return }
-
-        failedAttemptCount = kSharedUserDefaults.integer(forKey: Key.failedAttemptCount.rawValue)
-
-        let appLockTimeRawValue = kSharedUserDefaults.integer(forKey: Key.appLockTime.rawValue)
-        appLockTime = .init(rawValue: appLockTimeRawValue) ?? .twoMinutes
-
-        let clipboardExpirationRawValue =
-            kSharedUserDefaults.integer(forKey: Key.clipboardExpiration.rawValue)
-        clipboardExpiration = .init(rawValue: clipboardExpirationRawValue) ?? .oneMinute
-
-        shareClipboard = kSharedUserDefaults.bool(forKey: Key.shareClipboard.rawValue)
-
-        let dismissedBannerIdsString =
-            kSharedUserDefaults.string(forKey: Key.dismissedBannerIds.rawValue)
-        dismissedBannerIds = dismissedBannerIdsString?.components(separatedBy: ",") ?? []
-
-        didMigrateToKeychain = true
-    }
-
-    func migrateToPINSupport() {
-        guard !didMigrateToPINSupport else { return }
-
-        let biometricAuthenticationEnabled =
-            kSharedUserDefaults.bool(forKey: Key.biometricAuthenticationEnabled.rawValue)
-
-        if biometricAuthenticationEnabled {
-            localAuthenticationMethod = .biometric
-        }
-
-        didMigrateToPINSupport = true
     }
 }
 
@@ -193,10 +156,11 @@ private extension Preferences {
         case isFirstRun
         case createdItemsCount
 
-        // Temporary keys, can be removed several versions after 1.0.3
-        case didMigrateToKeychain
-        case didMigrateToPINSupport
-        case biometricAuthenticationEnabled
+        // Temporary keys
+        // Can be removed several versions after 1.5.7
+        case didMigrateToSeparatedCredentials
+        // Can be removed several versions after 1.8.0
+        case didMigrateCredentialsToShareExtension
     }
 }
 

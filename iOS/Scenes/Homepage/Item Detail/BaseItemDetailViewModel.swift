@@ -19,37 +19,34 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import Combine
 import Core
 import CryptoKit
+import Entities
 import Factory
+import Macro
 import UIKit
 
-let kItemDetailSectionPadding: CGFloat = 16
-
+@MainActor
 protocol ItemDetailViewModelDelegate: AnyObject {
-    func itemDetailViewModelWantsToShowSpinner()
-    func itemDetailViewModelWantsToHideSpinner()
     func itemDetailViewModelWantsToGoBack(isShownAsSheet: Bool)
     func itemDetailViewModelWantsToEditItem(_ itemContent: ItemContent)
     func itemDetailViewModelWantsToCopy(text: String, bannerMessage: String)
-    func itemDetailViewModelWantsToShowFullScreen(_ text: String)
-    func itemDetailViewModelWantsToOpen(urlString: String)
-    func itemDetailViewModelWantsToMove(item: ItemIdentifiable, delegate: MoveVaultListViewModelDelegate)
-    func itemDetailViewModelWantsToUpgrade()
-    func itemDetailViewModelDidMove(item: ItemTypeIdentifiable, to vault: Vault)
-    func itemDetailViewModelDidMoveToTrash(item: ItemTypeIdentifiable)
-    func itemDetailViewModelDidRestore(item: ItemTypeIdentifiable)
-    func itemDetailViewModelDidPermanentlyDelete(item: ItemTypeIdentifiable)
-    func itemDetailViewModelDidEncounter(error: Error)
+    func itemDetailViewModelWantsToShowFullScreen(_ data: FullScreenData)
+    func itemDetailViewModelDidMoveToTrash(item: any ItemTypeIdentifiable)
 }
 
+@MainActor
 class BaseItemDetailViewModel: ObservableObject {
     @Published private(set) var isFreeUser = false
     @Published var moreInfoSectionExpanded = false
     @Published var showingDeleteAlert = false
+    @Published private(set) var plan: Plan?
 
     let isShownAsSheet: Bool
     let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
+    let symmetricKeyProvider = resolve(\SharedDataContainer.symmetricKeyProvider)
+
     let upgradeChecker: UpgradeCheckerProtocol
     private(set) var itemContent: ItemContent {
         didSet {
@@ -58,24 +55,72 @@ class BaseItemDetailViewModel: ObservableObject {
     }
 
     private(set) var customFieldUiModels: [CustomFieldUiModel]
-    let vault: Vault? // Nullable because we only show vault when there're more than 1 vault
+    let vault: VaultListUiModel?
+    let shouldShowVault: Bool
     let logger = resolve(\SharedToolingContainer.logger)
+    let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+
+    private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
+    private let getUserShareStatus = resolve(\UseCasesContainer.getUserShareStatus)
+    private let canUserPerformActionOnVault = resolve(\UseCasesContainer.canUserPerformActionOnVault)
+    private let pinItem = resolve(\SharedUseCasesContainer.pinItem)
+    private let unpinItem = resolve(\SharedUseCasesContainer.unpinItem)
+    private let getFeatureFlagStatus = resolve(\SharedUseCasesContainer.getFeatureFlagStatus)
+    private let getUserPlan = resolve(\SharedUseCasesContainer.getUserPlan)
+    private var cancellable = Set<AnyCancellable>()
+
+    @LazyInjected(\SharedServiceContainer.clipboardManager) private var clipboardManager
+
+    var isAllowedToShare: Bool {
+        guard let vault else {
+            return false
+        }
+        return getUserShareStatus(for: vault.vault) != .cantShare
+    }
+
+    var isAllowedToEdit: Bool {
+        guard let vault else {
+            return false
+        }
+        return canUserPerformActionOnVault(for: vault.vault)
+    }
+
+    var itemHistoryEnabled: Bool {
+        guard getFeatureFlagStatus(with: FeatureFlagType.passItemHistoryV1), let plan, !plan.isFreeUser else {
+            return false
+        }
+        return true
+    }
 
     weak var delegate: ItemDetailViewModelDelegate?
 
-    private var symmetricKey: SymmetricKey { itemRepository.symmetricKey }
-
     init(isShownAsSheet: Bool,
          itemContent: ItemContent,
-         upgradeChecker: UpgradeCheckerProtocol,
-         vault: Vault?) {
+         upgradeChecker: UpgradeCheckerProtocol) {
         self.isShownAsSheet = isShownAsSheet
         self.itemContent = itemContent
         customFieldUiModels = itemContent.customFields.map { .init(customField: $0) }
         self.upgradeChecker = upgradeChecker
-        self.vault = vault
+
+        let allVaults = vaultsManager.getAllVaultContents()
+        vault = allVaults
+            .first { $0.vault.shareId == itemContent.shareId }
+            .map { VaultListUiModel(vaultContent: $0) }
+        shouldShowVault = allVaults.count > 1
+
         bindValues()
         checkIfFreeUser()
+
+        getUserPlan()
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .compactMap { $0 }
+            .sink { [weak self] refreshedPlan in
+                guard let self else {
+                    return
+                }
+                plan = refreshedPlan
+            }.store(in: &cancellable)
     }
 
     /// To be overidden by subclasses
@@ -97,53 +142,90 @@ class BaseItemDetailViewModel: ObservableObject {
         delegate?.itemDetailViewModelWantsToEditItem(itemContent)
     }
 
+    func share() {
+        guard let vault else { return }
+        if getUserShareStatus(for: vault.vault) == .canShare {
+            router.present(for: .shareVaultFromItemDetail(vault, itemContent))
+        } else {
+            router.present(for: .upselling)
+        }
+    }
+
     func refresh() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let shareId = self.itemContent.shareId
-                let itemId = self.itemContent.item.itemID
+                let shareId = itemContent.shareId
+                let itemId = itemContent.item.itemID
                 guard let updatedItemContent =
-                    try await self.itemRepository.getItemContent(shareId: shareId,
-                                                                 itemId: itemId) else {
+                    try await itemRepository.getItemContent(shareId: shareId,
+                                                            itemId: itemId) else {
                     return
                 }
-                self.itemContent = updatedItemContent
-                self.bindValues()
+                itemContent = updatedItemContent
+                bindValues()
             } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func showLarge(_ text: String) {
-        delegate?.itemDetailViewModelWantsToShowFullScreen(text)
-    }
-
-    func copyNote(_ text: String) {
-        copyToClipboard(text: text, message: "Note copied")
+    func showLarge(_ data: FullScreenData) {
+        delegate?.itemDetailViewModelWantsToShowFullScreen(data)
     }
 
     func moveToAnotherVault() {
-        delegate?.itemDetailViewModelWantsToMove(item: itemContent, delegate: self)
+        router.present(for: .moveItemsBetweenVaults(.singleItem(itemContent)))
+    }
+
+    func toggleItemPinning() {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                logger.trace("beginning of pin/unpin of \(itemContent.debugDescription)")
+                router.display(element: .globalLoading(shouldShow: true))
+                let newItemState = if itemContent.item.pinned {
+                    try await unpinItem(item: itemContent)
+                } else {
+                    try await pinItem(item: itemContent)
+                }
+                router.display(element: .successMessage(newItemState.item.pinMessage, config: .refresh))
+                logger.trace("Success of pin/unpin of \(itemContent.debugDescription)")
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+
+    func copyNoteContent() {
+        guard itemContent.type == .note else {
+            assertionFailure("Only applicable to note item")
+            return
+        }
+        clipboardManager.copy(text: itemContent.note,
+                              bannerMessage: #localized("Note content copied"))
     }
 
     func moveToTrash() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemDetailViewModelWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.logger.trace("Trashing \(self.itemContent.debugInformation)")
-                self.delegate?.itemDetailViewModelWantsToShowSpinner()
-                let encryptedItem = try await self.getItemTask(item: self.itemContent).value
-                let item = try encryptedItem.getItemContent(symmetricKey: self.symmetricKey)
-                try await self.itemRepository.trashItems([encryptedItem])
-                self.delegate?.itemDetailViewModelDidMoveToTrash(item: item)
-                self.logger.info("Trashed \(item.debugInformation)")
+                logger.trace("Trashing \(itemContent.debugDescription)")
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getItemTask(item: itemContent).value
+                let item = try encryptedItem.getItemContent(symmetricKey: getSymmetricKey())
+                try await itemRepository.trashItems([encryptedItem])
+                delegate?.itemDetailViewModelDidMoveToTrash(item: item)
+                logger.info("Trashed \(item.debugDescription)")
             } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -151,19 +233,19 @@ class BaseItemDetailViewModel: ObservableObject {
     func restore() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemDetailViewModelWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.logger.trace("Restoring \(self.itemContent.debugInformation)")
-                self.delegate?.itemDetailViewModelWantsToShowSpinner()
-                let encryptedItem = try await self.getItemTask(item: self.itemContent).value
-                let symmetricKey = self.itemRepository.symmetricKey
-                let item = try encryptedItem.getItemContent(symmetricKey: symmetricKey)
-                try await self.itemRepository.untrashItems([encryptedItem])
-                self.delegate?.itemDetailViewModelDidRestore(item: item)
-                self.logger.info("Restored \(item.debugInformation)")
+                logger.trace("Restoring \(itemContent.debugDescription)")
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getItemTask(item: itemContent).value
+                let item = try encryptedItem.getItemContent(symmetricKey: getSymmetricKey())
+                try await itemRepository.untrashItems([encryptedItem])
+                router.display(element: .successMessage(item.type.restoreMessage,
+                                                        config: .dismissAndRefresh(with: .update(item.type))))
+                logger.info("Restored \(item.debugDescription)")
             } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -171,25 +253,33 @@ class BaseItemDetailViewModel: ObservableObject {
     func permanentlyDelete() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemDetailViewModelWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.logger.trace("Permanently deleting \(self.itemContent.debugInformation)")
-                self.delegate?.itemDetailViewModelWantsToShowSpinner()
-                let encryptedItem = try await self.getItemTask(item: self.itemContent).value
-                let symmetricKey = self.itemRepository.symmetricKey
-                let item = try encryptedItem.getItemContent(symmetricKey: symmetricKey)
-                try await self.itemRepository.deleteItems([encryptedItem], skipTrash: false)
-                self.delegate?.itemDetailViewModelDidPermanentlyDelete(item: item)
-                self.logger.info("Permanently deleted \(item.debugInformation)")
+                logger.trace("Permanently deleting \(itemContent.debugDescription)")
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getItemTask(item: itemContent).value
+                let item = try encryptedItem.getItemContent(symmetricKey: getSymmetricKey())
+                try await itemRepository.deleteItems([encryptedItem], skipTrash: false)
+                router.display(element: .successMessage(item.type.deleteMessage,
+                                                        config: .dismissAndRefresh(with: .delete(item.type))))
+                logger.info("Permanently deleted \(item.debugDescription)")
             } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
     func upgrade() {
-        delegate?.itemDetailViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
+    }
+
+    func getSymmetricKey() throws -> SymmetricKey {
+        try symmetricKeyProvider.getSymmetricKey()
+    }
+
+    func showItemHistory() {
+        router.present(for: .history(itemContent))
     }
 }
 
@@ -200,57 +290,24 @@ private extension BaseItemDetailViewModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                self.isFreeUser = try await self.upgradeChecker.isFreeUser()
+                isFreeUser = try await upgradeChecker.isFreeUser()
             } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func getItemTask(item: ItemIdentifiable) -> Task<SymmetricallyEncryptedItem, Error> {
+    func getItemTask(item: any ItemIdentifiable) -> Task<SymmetricallyEncryptedItem, Error> {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else {
-                throw PPError.deallocatedSelf
+                throw PassError.deallocatedSelf
             }
-            guard let item = try await self.itemRepository.getItem(shareId: item.shareId,
-                                                                   itemId: item.itemId) else {
-                throw PPError.itemNotFound(shareID: item.shareId, itemID: item.itemId)
+            guard let item = try await itemRepository.getItem(shareId: item.shareId,
+                                                              itemId: item.itemId) else {
+                throw PassError.itemNotFound(item)
             }
             return item
         }
-    }
-
-    func doMove(to vault: Vault) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.delegate?.itemDetailViewModelWantsToHideSpinner() }
-            do {
-                self.logger.trace("Moving \(self.itemContent.debugInformation) to share \(vault.shareId)")
-                self.delegate?.itemDetailViewModelWantsToShowSpinner()
-                try await self.itemRepository.move(item: self.itemContent, toShareId: vault.shareId)
-                self.logger.trace("Moved \(self.itemContent.debugInformation) to share \(vault.shareId)")
-                self.delegate?.itemDetailViewModelDidMove(item: itemContent, to: vault)
-            } catch {
-                self.logger.error(error)
-                self.delegate?.itemDetailViewModelDidEncounter(error: error)
-            }
-        }
-    }
-}
-
-// MARK: - MoveVaultListViewModelDelegate
-
-extension BaseItemDetailViewModel: MoveVaultListViewModelDelegate {
-    func moveVaultListViewModelWantsToUpgrade() {
-        delegate?.itemDetailViewModelWantsToUpgrade()
-    }
-
-    func moveVaultListViewModelDidPick(vault: Vault) {
-        doMove(to: vault)
-    }
-
-    func moveVaultListViewModelDidEncounter(error: Error) {
-        delegate?.itemDetailViewModelDidEncounter(error: error)
     }
 }

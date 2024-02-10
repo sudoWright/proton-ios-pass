@@ -21,22 +21,21 @@
 import Client
 import Combine
 import Core
+import DocScanner
+import Entities
 import Factory
-import ProtonCore_Login
+import Foundation
+import Macro
+import ProtonCoreLogin
 
+@MainActor
 protocol CreateEditItemViewModelDelegate: AnyObject {
-    func createEditItemViewModelWantsToShowLoadingHud()
-    func createEditItemViewModelWantsToHideLoadingHud()
-    func createEditItemViewModelWantsToChangeVault(selectedVault: Vault,
-                                                   delegate: VaultSelectorViewModelDelegate)
     func createEditItemViewModelWantsToAddCustomField(delegate: CustomFieldAdditionDelegate)
     func createEditItemViewModelWantsToEditCustomFieldTitle(_ uiModel: CustomFieldUiModel,
                                                             delegate: CustomFieldEditionDelegate)
-    func createEditItemViewModelWantsToUpgrade()
     func createEditItemViewModelDidCreateItem(_ item: SymmetricallyEncryptedItem,
                                               type: ItemContentType)
-    func createEditItemViewModelDidUpdateItem(_ type: ItemContentType)
-    func createEditItemViewModelDidEncounter(error: Error)
+    func createEditItemViewModelDidUpdateItem(_ type: ItemContentType, updated: Bool)
 }
 
 enum ItemMode {
@@ -46,46 +45,60 @@ enum ItemMode {
     var isEditMode: Bool {
         switch self {
         case .edit:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
-
-    var isCreateMode: Bool { !isEditMode }
 }
 
 enum ItemCreationType {
+    case note(title: String, note: String)
     case alias
-    case login(title: String?, url: String?, autofill: Bool)
+    case login(title: String?, url: String?, note: String?, autofill: Bool)
     case other
 }
 
+@MainActor
 class BaseCreateEditItemViewModel {
     @Published private(set) var selectedVault: Vault
     @Published private(set) var isFreeUser = false
     @Published private(set) var isSaving = false
     @Published private(set) var canAddMoreCustomFields = true
     @Published private(set) var recentlyAddedOrEditedField: CustomFieldUiModel?
-    @Published var customFieldUiModels = [CustomFieldUiModel]() {
-        didSet {
-            didEditSomething = true
-        }
-    }
 
+    @Published var customFieldUiModels = [CustomFieldUiModel]()
     @Published var isObsolete = false
+
+    // Scanning
+    @Published var isShowingScanner = false
+    let scanResponsePublisher: PassthroughSubject<ScanResult?, Error> = .init()
 
     let mode: ItemMode
     let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
     let upgradeChecker: UpgradeCheckerProtocol
     let logger = resolve(\SharedToolingContainer.logger)
     let vaults: [Vault]
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let getMainVault = resolve(\SharedUseCasesContainer.getMainVault)
+    private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
+    private let addTelemetryEvent = resolve(\SharedUseCasesContainer.addTelemetryEvent)
 
     var hasEmptyCustomField: Bool {
         customFieldUiModels.filter { $0.customField.type != .text }.contains(where: \.customField.content.isEmpty)
     }
 
-    var didEditSomething = false
+    var didEditSomething: Bool {
+        switch mode {
+        case .create:
+            return true
+        case let .edit(oldItemContent):
+            if let newItemContent = generateItemContent() {
+                return !oldItemContent.protobuf.isLooselyEqual(to: newItemContent)
+            }
+            return true
+        }
+    }
 
     weak var delegate: CreateEditItemViewModelDelegate?
     var cancellables = Set<AnyCancellable>()
@@ -103,20 +116,23 @@ class BaseCreateEditItemViewModel {
         }
 
         guard let vault = vaults.first(where: { $0.shareId == vaultShareId }) ?? vaults.first else {
-            throw PPError.vault(.vaultNotFound(vaultShareId))
+            throw PassError.vault(.vaultNotFound(vaultShareId))
         }
-        selectedVault = vault
+
+        if vault.canEdit {
+            selectedVault = vault
+        } else {
+            guard let vault = vaults.twoOldestVaults.owned ?? vaults.first else {
+                throw PassError.vault(.vaultNotFound(vaultShareId))
+            }
+            selectedVault = vault
+        }
         self.mode = mode
         self.upgradeChecker = upgradeChecker
         self.vaults = vaults
         bindValues()
-        checkIfFreeUser()
-        pickPrimaryVaultIfApplicable()
-        checkIfAbleToAddMoreCustomFields()
+        setUp()
     }
-
-    /// To be overridden by subclasses
-    var isSaveable: Bool { false }
 
     func bindValues() {}
 
@@ -126,16 +142,16 @@ class BaseCreateEditItemViewModel {
     }
 
     // swiftlint:disable:next unavailable_function
-    func generateItemContent() -> ItemContentProtobuf {
+    func generateItemContent() -> ItemContentProtobuf? {
         fatalError("Must be overridden by subclasses")
     }
 
     func saveButtonTitle() -> String {
         switch mode {
         case .create:
-            return "Create"
+            #localized("Create")
         case .edit:
-            return "Save"
+            #localized("Save")
         }
     }
 
@@ -143,56 +159,50 @@ class BaseCreateEditItemViewModel {
 
     func generateAliasCreationInfo() -> AliasCreationInfo? { nil }
     func generateAliasItemContent() -> ItemContentProtobuf? { nil }
+
+    func telemetryEventTypes() -> [TelemetryEventType] { [] }
 }
 
 // MARK: - Private APIs
 
 private extension BaseCreateEditItemViewModel {
-    func checkIfFreeUser() {
+    func setUp() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                self.isFreeUser = try await self.upgradeChecker.isFreeUser()
-            } catch {
-                self.logger.error(error)
-                self.delegate?.createEditItemViewModelDidEncounter(error: error)
-            }
-        }
-    }
-
-    /// Automatically switch to primary vault if free user. They won't be able to select other vaults anyway.
-    func pickPrimaryVaultIfApplicable() {
-        guard case .create = mode, vaults.count > 1, !selectedVault.isPrimary else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let isFreeUser = try await self.upgradeChecker.isFreeUser()
-                if isFreeUser, let primaryVault = self.vaults.first(where: { $0.isPrimary }) {
-                    self.selectedVault = primaryVault
+                isFreeUser = try await upgradeChecker.isFreeUser()
+                canAddMoreCustomFields = !isFreeUser
+                if isFreeUser,
+                   case .create = mode, vaults.count > 1,
+                   let mainVault = await getMainVault() {
+                    selectedVault = mainVault
                 }
             } catch {
-                self.logger.error(error)
-                self.delegate?.createEditItemViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
-    }
 
-    func checkIfAbleToAddMoreCustomFields() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let isFreeUser = try await self.upgradeChecker.isFreeUser()
-                self.canAddMoreCustomFields = !isFreeUser
-            } catch {
-                self.logger.error(error)
-                self.delegate?.createEditItemViewModelDidEncounter(error: error)
+        vaultsManager.$vaultSelection
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] selection in
+                guard let self,
+                      let newSelectedVault = selection.preciseVault,
+                      newSelectedVault != selectedVault else {
+                    return
+                }
+                selectedVault = newSelectedVault
             }
-        }
+            .store(in: &cancellables)
     }
 
     func createItem(for type: ItemCreationType) async throws -> SymmetricallyEncryptedItem? {
         let shareId = selectedVault.shareId
-        let itemContent = generateItemContent()
+        guard let itemContent = generateItemContent() else {
+            logger.warning("No item content")
+            return nil
+        }
 
         switch type {
         case .alias:
@@ -224,18 +234,27 @@ private extension BaseCreateEditItemViewModel {
         return try await itemRepository.createItem(itemContent: itemContent, shareId: shareId)
     }
 
-    func editItem(oldItemContent: ItemContent) async throws {
+    /// Return `true` if item is edited, `false` otherwise
+    func editItem(oldItemContent: ItemContent) async throws -> Bool {
         try await additionalEdit()
         let itemId = oldItemContent.itemId
         let shareId = oldItemContent.shareId
         guard let oldItem = try await itemRepository.getItem(shareId: shareId,
                                                              itemId: itemId) else {
-            throw PPError.itemNotFound(shareID: shareId, itemID: itemId)
+            throw PassError.itemNotFound(oldItemContent)
         }
-        let newItemContent = generateItemContent()
+        guard let newItemContent = generateItemContent() else {
+            logger.warning("No new item content")
+            return false
+        }
+        guard !oldItemContent.protobuf.isLooselyEqual(to: newItemContent) else {
+            logger.trace("Skipped editing because no changes \(oldItemContent.debugDescription)")
+            return false
+        }
         try await itemRepository.updateItem(oldItem: oldItem.item,
                                             newItemContent: newItemContent,
                                             shareId: oldItem.shareId)
+        return true
     }
 }
 
@@ -251,34 +270,41 @@ extension BaseCreateEditItemViewModel {
     }
 
     func upgrade() {
-        delegate?.createEditItemViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
+    }
+
+    func openScanner() {
+        isShowingScanner = true
     }
 
     func save() {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            defer { self.isSaving = false }
-            self.isSaving = true
+            defer { isSaving = false }
+            isSaving = true
 
             do {
-                switch self.mode {
+                switch mode {
                 case let .create(_, type):
-                    self.logger.trace("Creating item")
-                    if let createdItem = try await self.createItem(for: type) {
-                        self.logger.info("Created \(createdItem.debugInformation)")
-                        self.delegate?.createEditItemViewModelDidCreateItem(createdItem, type: itemContentType())
+                    logger.trace("Creating item")
+                    if let createdItem = try await createItem(for: type) {
+                        logger.info("Created \(createdItem.debugDescription)")
+                        delegate?.createEditItemViewModelDidCreateItem(createdItem, type: itemContentType())
                     }
 
                 case let .edit(oldItemContent):
-                    self.logger.trace("Editing \(oldItemContent.debugInformation)")
-                    try await self.editItem(oldItemContent: oldItemContent)
-                    self.logger.info("Edited \(oldItemContent.debugInformation)")
-                    self.delegate?.createEditItemViewModelDidUpdateItem(itemContentType())
+                    logger.trace("Editing \(oldItemContent.debugDescription)")
+                    let updated = try await editItem(oldItemContent: oldItemContent)
+                    logger.info("Edited \(oldItemContent.debugDescription)")
+                    delegate?.createEditItemViewModelDidUpdateItem(itemContentType(),
+                                                                   updated: updated)
                 }
+
+                addTelemetryEvent(with: telemetryEventTypes())
             } catch {
-                self.logger.error(error)
-                self.delegate?.createEditItemViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -291,36 +317,20 @@ extension BaseCreateEditItemViewModel {
             guard let self else { return }
             do {
                 guard let updatedItem =
-                    try await self.itemRepository.getItem(shareId: itemContent.shareId,
-                                                          itemId: itemContent.item.itemID) else {
+                    try await itemRepository.getItem(shareId: itemContent.shareId,
+                                                     itemId: itemContent.item.itemID) else {
                     return
                 }
-                self.isObsolete = itemContent.item.revision != updatedItem.item.revision
+                isObsolete = itemContent.item.revision != updatedItem.item.revision
             } catch {
-                self.logger.error(error)
-                self.delegate?.createEditItemViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
     func changeVault() {
-        delegate?.createEditItemViewModelWantsToChangeVault(selectedVault: selectedVault, delegate: self)
-    }
-}
-
-// MARK: - VaultSelectorViewModelDelegate
-
-extension BaseCreateEditItemViewModel: VaultSelectorViewModelDelegate {
-    func vaultSelectorViewModelWantsToUpgrade() {
-        upgrade()
-    }
-
-    func vaultSelectorViewModelDidSelect(vault: Vault) {
-        selectedVault = vault
-    }
-
-    func vaultSelectorViewModelDidEncounter(error: Error) {
-        delegate?.createEditItemViewModelDidEncounter(error: error)
+        router.present(for: .vaultSelection)
     }
 }
 

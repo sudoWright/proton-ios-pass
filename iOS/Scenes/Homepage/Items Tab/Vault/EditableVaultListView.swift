@@ -19,10 +19,12 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct EditableVaultListView: View {
     @Environment(\.dismiss) private var dismiss
@@ -33,7 +35,7 @@ struct EditableVaultListView: View {
         VStack(alignment: .leading) {
             ScrollView {
                 VStack(spacing: 0) {
-                    switch viewModel.vaultsManager.state {
+                    switch viewModel.state {
                     case .error, .loading:
                         // Should never happen
                         ProgressView()
@@ -54,46 +56,28 @@ struct EditableVaultListView: View {
                 }
                 .padding(.horizontal)
             }
-            .animation(.default, value: viewModel.vaultsManager.state)
-
             HStack {
-                CapsuleTextButton(title: "Create vault",
+                CapsuleTextButton(title: #localized("Create vault"),
                                   titleColor: PassColor.interactionNormMajor2,
                                   backgroundColor: PassColor.interactionNormMinor1,
-                                  action: viewModel.createNewVault)
+                                  action: { viewModel.createNewVault() })
                     .fixedSize(horizontal: true, vertical: true)
                 Spacer()
             }
             .padding([.bottom, .horizontal])
         }
         .background(Color(uiColor: PassColor.backgroundWeak))
+        .showSpinner(viewModel.loading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .alert("Aliases won’t be shared",
-               isPresented: $viewModel.showingAliasAlert,
-               actions: {
-                   Button(action: {
-                              viewModel.router.presentSheet(for: .sharingFlow)
-                          },
-                          label: {
-                              Text("OK")
-                          })
-               },
-               message: {
-                   Text("""
-                   This vault contains \(viewModel.numberOfAliasforSharedVault) Aliases.
-                   Alias sharing is currently not supported and they won’t be shared.
-                   """)
-               })
     }
 
     @ViewBuilder
     private func vaultRow(for selection: VaultSelection) -> some View {
-        let vaultsManager = viewModel.vaultsManager
-
+        let itemCount = viewModel.itemCount(for: selection)
         HStack {
             Button(action: {
                 dismiss()
-                vaultsManager.select(selection)
+                viewModel.select(selection)
             }, label: {
                 VaultRow(thumbnail: {
                              CircleButton(icon: selection.icon,
@@ -101,8 +85,10 @@ struct EditableVaultListView: View {
                                           backgroundColor: selection.color.withAlphaComponent(0.16))
                          },
                          title: selection.title,
-                         itemCount: vaultsManager.getItemCount(for: selection),
-                         isSelected: vaultsManager.isSelected(selection),
+                         itemCount: itemCount,
+                         isShared: selection.shared,
+                         isSelected: viewModel.isSelected(selection),
+                         showBadge: selection.showBadge,
                          height: 74)
             })
             .buttonStyle(.plain)
@@ -111,10 +97,9 @@ struct EditableVaultListView: View {
 
             switch selection {
             case .all:
-                // Gimmick view to take up space
-                threeDotsIcon().opacity(0)
+                EmptyView()
             case let .precise(vault):
-                vaultTrailingView(vault)
+                vaultTrailingView(vault, haveItems: itemCount > 0)
             case .trash:
                 trashTrailingView
             }
@@ -130,9 +115,9 @@ struct EditableVaultListView: View {
     }
 
     @ViewBuilder
-    private func vaultTrailingView(_ vault: Vault) -> some View {
+    private func vaultTrailingView(_ vault: Vault, haveItems: Bool) -> some View {
         Menu(content: {
-            if vault.isOwner {
+            if viewModel.canEdit(vault: vault) {
                 Button(action: {
                     viewModel.edit(vault: vault)
                 }, label: {
@@ -146,7 +131,7 @@ struct EditableVaultListView: View {
                 })
             }
 
-            if !vault.isPrimary, vault.isOwner, viewModel.isAllowedToShare, !vault.shared {
+            if viewModel.canShare(vault: vault) {
                 Button(action: {
                     viewModel.share(vault: vault)
                 }, label: {
@@ -160,12 +145,24 @@ struct EditableVaultListView: View {
 
             if vault.shared {
                 Button(action: {
-                    viewModel.router.presentSheet(for: .manageShareVault(vault, dismissBeforeShowing: false))
+                    viewModel.router.present(for: .manageShareVault(vault, .none))
                 }, label: {
                     Label(title: {
                         Text(vault.isAdmin ? "Manage access" : "View members")
                     }, icon: {
                         IconProvider.users
+                    })
+                })
+            }
+
+            if viewModel.canMoveItems(vault: vault), haveItems {
+                Button(action: {
+                    viewModel.router.present(for: .moveItemsBetweenVaults(.allItems(vault)))
+                }, label: {
+                    Label(title: {
+                        Text("Move all items to another vault")
+                    }, icon: {
+                        IconProvider.folderArrowIn
                     })
                 })
             }
@@ -186,9 +183,9 @@ struct EditableVaultListView: View {
 
     @ViewBuilder
     private var trashTrailingView: some View {
-        if viewModel.vaultsManager.getItemCount(for: .trash) > 0 {
+        if viewModel.hasTrashItems {
             Menu(content: {
-                Button(action: viewModel.restoreAllTrashedItems) {
+                Button { viewModel.restoreAllTrashedItems() } label: {
                     Label(title: {
                         Text("Restore all items")
                     }, icon: {
@@ -214,7 +211,7 @@ struct EditableVaultListView: View {
                        isPresented: $isShowingEmptyTrashAlert,
                        actions: {
                            Button(role: .destructive,
-                                  action: viewModel.emptyTrash,
+                                  action: { viewModel.emptyTrash() },
                                   label: { Text("Empty trash") })
 
                            Button(role: .cancel, label: { Text("Cancel") })
@@ -228,33 +225,33 @@ extension VaultSelection {
     var title: String {
         switch self {
         case .all:
-            return "All vaults"
+            #localized("All vaults")
         case let .precise(vault):
-            return vault.name
+            vault.name
         case .trash:
-            return "Trash"
+            #localized("Trash")
         }
     }
 
     var icon: UIImage {
         switch self {
         case .all:
-            return PassIcon.brandPass
+            PassIcon.brandPass
         case let .precise(vault):
-            return vault.displayPreferences.icon.icon.bigImage
+            vault.displayPreferences.icon.icon.bigImage
         case .trash:
-            return IconProvider.trash
+            IconProvider.trash
         }
     }
 
     var color: UIColor {
         switch self {
         case .all:
-            return PassColor.interactionNormMajor2
+            PassColor.interactionNormMajor2
         case let .precise(vault):
-            return vault.displayPreferences.color.color.color
+            vault.displayPreferences.color.color.color
         case .trash:
-            return PassColor.textWeak
+            PassColor.textWeak
         }
     }
 }

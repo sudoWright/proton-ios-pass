@@ -18,7 +18,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import Entities
 import Factory
+import Foundation
 
 extension FactoryContext {
     /// Overload of `setArg(_:forKey:)`  to make it more flexible
@@ -27,6 +29,7 @@ extension FactoryContext {
         setArg(arg.rawValue, forKey: key)
     }
 
+    // periphery:ignore
     /// Overload of `removeArg(forKey:)`  to make it more flexible
     /// by taking `key` as `any RawRepresentable<String>` instead of `String`
     static func removeArg(forKey key: any RawRepresentable<String>) {
@@ -40,5 +43,22 @@ extension FactoryModifying {
     @discardableResult
     func onArg(_ arg: any RawRepresentable<String>, factory: @escaping (P) -> T) -> Self {
         onArg(arg.rawValue, factory: factory)
+    }
+}
+
+extension SharedContainer {
+    static func setUpContext() {
+        let key = "ProtonPass"
+        switch Bundle.main.infoDictionary?["MODULE"] as? String {
+        case "AUTOFILL_EXTENSION":
+            FactoryContext.setArg(PassModule.autoFillExtension, forKey: key)
+        case "KEYBOARD_EXTENSION":
+            FactoryContext.setArg(PassModule.keyboardExtension, forKey: key)
+        case "SHARE_EXTENSION":
+            FactoryContext.setArg(PassModule.shareExtension, forKey: key)
+        default:
+            // Default to host app
+            break
+        }
     }
 }

@@ -18,14 +18,15 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import DesignSystem
 import Factory
 import SwiftUI
-import UIComponents
 
 struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject var viewModel: OnboardingViewModel
+    @StateObject private var viewModel = OnboardingViewModel()
     private let theme = resolve(\SharedToolingContainer.theme)
+    let onWatchTutorial: () -> Void
 
     var body: some View {
         VStack {
@@ -54,6 +55,7 @@ struct OnboardingView: View {
                     Text(viewModel.state.title)
                         .font(.headline)
                         .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
                         .foregroundColor(Color(uiColor: PassColor.textNorm))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .fixedSize(horizontal: false, vertical: true)
@@ -73,18 +75,26 @@ struct OnboardingView: View {
                                       titleColor: PassColor.textInvert,
                                       backgroundColor: PassColor.interactionNormMajor1,
                                       height: 60,
-                                      action: viewModel.primaryAction)
+                                      action: { viewModel.primaryAction() })
                         .padding(.vertical, 26)
 
                     if let secondaryButtonTitle = viewModel.state.secondaryButtonTitle {
-                        Button(action: viewModel.secondaryAction) {
+                        Button { viewModel.secondaryAction() } label: {
                             Text(secondaryButtonTitle)
                                 .foregroundColor(Color(uiColor: PassColor.interactionNormMajor2))
                                 .animationsDisabled()
                         }
                         .animation(.default, value: viewModel.state.secondaryButtonTitle)
+                    } else if viewModel.state == .aliases {
+                        Button(action: onWatchTutorial) {
+                            Label(title: { Text("Watch a short video on how to use Proton Pass") },
+                                  icon: { Image(uiImage: PassIcon.youtube) })
+                                .foregroundStyle(PassColor.interactionNorm.toColor)
+                                .labelStyle(.belowIcon)
+                        }
+                        .buttonStyle(.plain)
                     } else {
-                        Text("Dummy text that takes place")
+                        Text(verbatim: "Dummy text that takes place")
                             .opacity(0)
                     }
 

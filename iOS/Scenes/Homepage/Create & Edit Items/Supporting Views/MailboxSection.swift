@@ -18,9 +18,10 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct MailboxSection: View {
     @ObservedObject var mailboxSelection: MailboxSelection
@@ -32,9 +33,9 @@ struct MailboxSection: View {
         var title: String {
             switch self {
             case .create:
-                return "Forward to"
+                #localized("Forward to")
             case .edit:
-                return "Forwarding to"
+                #localized("Forwarding to")
             }
         }
     }
@@ -43,7 +44,7 @@ struct MailboxSection: View {
         HStack {
             ItemDetailSectionIcon(icon: IconProvider.forward)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(mode.title)
                     .sectionTitleText()
                 Text(mailboxSelection.selectedMailboxesString)
@@ -54,7 +55,7 @@ struct MailboxSection: View {
             ItemDetailSectionIcon(icon: IconProvider.chevronDown)
         }
         .animation(.default, value: mailboxSelection.selectedMailboxes)
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
         .contentShape(Rectangle())
     }

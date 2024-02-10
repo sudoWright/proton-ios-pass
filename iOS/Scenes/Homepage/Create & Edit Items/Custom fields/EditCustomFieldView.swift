@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct EditCustomFieldView<Field: Hashable>: View {
     let focusedField: FocusState<Field?>.Binding
@@ -34,10 +35,10 @@ struct EditCustomFieldView<Field: Hashable>: View {
     var onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: uiModel.customField.type.icon)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(uiModel.customField.title)
                     .sectionTitleText()
 
@@ -46,22 +47,24 @@ struct EditCustomFieldView<Field: Hashable>: View {
                 // Looks like a SwiftUI bug
                 // https://stackoverflow.com/a/67436121
                 if isRemoved {
-                    Text("Dummy text")
+                    Text(verbatim: "Dummy text")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .opacity(0)
                 } else {
+                    let placeholder = uiModel.customField.type.title
                     switch uiModel.customField.type {
                     case .text:
                         TextEditorWithPlaceholder(text: $uiModel.customField.content,
                                                   focusedField: focusedField,
                                                   field: field,
-                                                  placeholder: "Text")
+                                                  placeholder: placeholder)
 
                     case .totp:
                         SensitiveTextField(text: $uiModel.customField.content,
-                                           placeholder: "2FA secret (TOTP)",
+                                           placeholder: placeholder,
                                            focusedField: focusedField,
-                                           field: field)
+                                           field: field,
+                                           font: .body.monospacedFont(for: uiModel.customField.content))
                             .foregroundColor(PassColor.textNorm.toColor)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
@@ -69,7 +72,7 @@ struct EditCustomFieldView<Field: Hashable>: View {
 
                     case .hidden:
                         SensitiveTextField(text: $uiModel.customField.content,
-                                           placeholder: "Hidden",
+                                           placeholder: placeholder,
                                            focusedField: focusedField,
                                            field: field)
                             .foregroundColor(PassColor.textNorm.toColor)
@@ -80,7 +83,7 @@ struct EditCustomFieldView<Field: Hashable>: View {
 
             Menu(content: {
                 Button(action: onEditTitle) {
-                    Label(title: { Text("Edit title") },
+                    Label(title: { Text("Edit name") },
                           icon: { Image(uiImage: IconProvider.pencil) })
                 }
 
@@ -97,7 +100,7 @@ struct EditCustomFieldView<Field: Hashable>: View {
                              backgroundColor: contentType.normMinor1Color)
             })
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
     }
 }

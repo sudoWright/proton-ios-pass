@@ -19,8 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
+import Macro
 import SwiftUI
-import UIComponents
 
 struct MoveVaultListView: View {
     @Environment(\.dismiss) private var dismiss
@@ -28,8 +30,27 @@ struct MoveVaultListView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
+            VStack(alignment: .center) {
+                Text("Select a vault")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundColor(PassColor.textNorm.toColor)
+                Label("Moving an item will reset its history", systemImage: "info.circle.fill")
+                    .font(.callout)
+                    .foregroundColor(PassColor.textWeak.toColor)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(PassColor.backgroundNorm.toColor)
+                    .cornerRadius(12)
+                Divider()
+                    .padding(.top, 12)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal)
+            .padding(.top, 30)
+
             if viewModel.isFreeUser {
-                LimitedVaultOperationsBanner(onUpgrade: viewModel.upgrade)
+                LimitedVaultOperationsBanner(onUpgrade: { viewModel.upgrade() })
                     .padding([.horizontal, .top])
             }
 
@@ -46,20 +67,20 @@ struct MoveVaultListView: View {
             }
 
             HStack(spacing: 16) {
-                CapsuleTextButton(title: "Cancel",
+                CapsuleTextButton(title: #localized("Cancel"),
                                   titleColor: PassColor.textWeak,
                                   backgroundColor: PassColor.textDisabled,
                                   height: 44,
                                   action: dismiss.callAsFunction)
 
-                DisablableCapsuleTextButton(title: "Confirm",
+                DisablableCapsuleTextButton(title: #localized("Confirm"),
                                             titleColor: PassColor.textInvert,
                                             disableTitleColor: PassColor.textHint,
                                             backgroundColor: PassColor.interactionNormMajor1,
                                             disableBackgroundColor: PassColor.interactionNormMinor1,
-                                            disabled: false,
+                                            disabled: viewModel.selectedVault == nil,
                                             height: 44,
-                                            action: { dismiss(); viewModel.confirm() })
+                                            action: { dismiss(); viewModel.doMove() })
             }
             .padding([.bottom, .horizontal])
         }
@@ -68,16 +89,17 @@ struct MoveVaultListView: View {
         .animation(.default, value: viewModel.isFreeUser)
     }
 
-    private func vaultRow(for vault: VaultListUiModel) -> some View {
+    private func vaultRow(for vault: VaultContentUiModel) -> some View {
         Button(action: {
             viewModel.selectedVault = vault
         }, label: {
             VaultRow(thumbnail: { VaultThumbnail(vault: vault.vault) },
                      title: vault.vault.name,
                      itemCount: vault.itemCount,
+                     isShared: vault.vault.shared,
                      isSelected: viewModel.selectedVault == vault)
         })
         .buttonStyle(.plain)
-        .opacityReduced(viewModel.isFreeUser && !vault.vault.isPrimary)
+        .opacityReduced(!vault.vault.canEdit)
     }
 }

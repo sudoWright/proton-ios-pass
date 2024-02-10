@@ -19,17 +19,18 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
 import Factory
 import SwiftUI
-import UIComponents
 
 struct CachedFavIconsSection: View {
     var body: some View {
         NavigationLink(destination: { CachedFavIconsView() },
-                       label: { Text("Cached fav icons") })
+                       label: { Text(verbatim: "Cached fav icons") })
     }
 }
 
+@MainActor
 final class CachedFavIconsViewModel: ObservableObject {
     @Published private(set) var icons = [FavIcon]()
     @Published private(set) var error: Error?
@@ -43,7 +44,7 @@ final class CachedFavIconsViewModel: ObservableObject {
             guard let self else { return }
             do {
                 self.error = nil
-                self.icons = try self.favIconRepository.getAllCachedIcons()
+                self.icons = try await favIconRepository.getAllCachedIcons()
             } catch {
                 self.error = error
             }
@@ -55,8 +56,8 @@ final class CachedFavIconsViewModel: ObservableObject {
             guard let self else { return }
             do {
                 self.error = nil
-                try self.favIconRepository.emptyCache()
-                self.icons = try self.favIconRepository.getAllCachedIcons()
+                try await favIconRepository.emptyCache()
+                self.icons = try await favIconRepository.getAllCachedIcons()
             } catch {
                 self.error = error
             }
@@ -70,10 +71,10 @@ struct CachedFavIconsView: View {
         Form {
             if let error = viewModel.error {
                 RetryableErrorView(errorMessage: error.localizedDescription,
-                                   onRetry: viewModel.loadIcons)
+                                   onRetry: { viewModel.loadIcons() })
             } else {
                 if viewModel.icons.isEmpty {
-                    Text("Empty cache")
+                    Text(verbatim: "Empty cache")
                         .font(.body.italic())
                         .foregroundColor(.secondary)
                 } else {
@@ -81,11 +82,15 @@ struct CachedFavIconsView: View {
                 }
             }
         }
-        .navigationTitle("Cached fav icons")
+        .navigationTitle(Text(verbatim: "Cached fav icons"))
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: viewModel.emptyCache) {
-                    Label("Empty cache", systemImage: "trash")
+                Button { viewModel.emptyCache() } label: {
+                    Label(title: {
+                        Text(verbatim: "Empty cache")
+                    }, icon: {
+                        Image(systemName: "trash")
+                    })
                 }
             }
         }
@@ -95,8 +100,8 @@ struct CachedFavIconsView: View {
     @ViewBuilder
     private var cachedIcons: some View {
         Section {
-            Text("🔴 icon is cached but can't be displayed")
-            Text("🟡 icon doesn't exist")
+            Text(verbatim: "🔴 icon is cached but can't be displayed")
+            Text(verbatim: "🟡 icon doesn't exist")
         }
 
         Section(content: {
@@ -123,7 +128,7 @@ struct CachedFavIconsView: View {
                 }
             }
         }, header: {
-            Text("\(viewModel.icons.count) cached icons")
+            Text(verbatim: "\(viewModel.icons.count) cached icons")
         })
     }
 }

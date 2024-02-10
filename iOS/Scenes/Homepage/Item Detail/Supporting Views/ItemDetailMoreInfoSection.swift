@@ -19,18 +19,23 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Factory
+import Foundation
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct ItemDetailMoreInfoSection: View {
+    private let clipboardManager = resolve(\SharedServiceContainer.clipboardManager)
     @Binding var isExpanded: Bool
-    private let uiModel: ItemDetailMoreInfoSectionUIModel
+    private let item: ItemContent
 
     init(isExpanded: Binding<Bool>,
          itemContent: ItemContent) {
         _isExpanded = isExpanded
-        uiModel = .init(itemContent: itemContent)
+        item = itemContent
     }
 
     var body: some View {
@@ -58,92 +63,55 @@ struct ItemDetailMoreInfoSection: View {
 
             if isExpanded {
                 VStack(alignment: .leading) {
-                    if let lastAutoFilledDate = uiModel.lastAutoFilledDate {
-                        HStack {
-                            title("Auto-filled:")
-                            Text(lastAutoFilledDate)
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                        }
-                    }
+                    HStack {
+                        title(#localized("Item ID") + ":")
+                        Text(item.itemId)
+                            .textSelection(.enabled)
+                            .onTapGesture(perform: copyItemId)
+                        Spacer()
+                    }.frame(maxWidth: .infinity, alignment: .leading)
 
                     HStack {
-                        title("Modified:")
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(uiModel.modificationCount)
-                                .fontWeight(.semibold)
-                            Text(uiModel.modificationDate)
-                        }
-                    }
-
-                    HStack {
-                        title("Created:")
-                        Text(uiModel.creationDate)
-                            .fontWeight(.semibold)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
+                        title(#localized("Vault ID") + ":")
+                        Text(item.shareId)
+                            .textSelection(.enabled)
+                            .onTapGesture(perform: copyVaultId)
+                        Spacer()
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.caption)
-                .foregroundColor(Color(uiColor: PassColor.textWeak))
+                .foregroundColor(PassColor.textWeak.toColor)
+                .frame(maxWidth: .infinity)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture { isExpanded.toggle() }
         .animation(.default, value: isExpanded)
     }
+}
 
-    private func icon(from image: UIImage) -> some View {
+private extension ItemDetailMoreInfoSection {
+    func copyItemId() {
+        clipboardManager.copy(text: item.itemId,
+                              bannerMessage: #localized("Item ID copied"))
+    }
+
+    func copyVaultId() {
+        clipboardManager.copy(text: item.shareId,
+                              bannerMessage: #localized("Vault ID copied"))
+    }
+
+    func icon(from image: UIImage) -> some View {
         Image(uiImage: image)
             .resizable()
             .scaledToFit()
             .frame(width: 16)
-            .foregroundColor(Color(uiColor: PassColor.textWeak))
+            .foregroundColor(PassColor.textWeak.toColor)
     }
 
-    private func title(_ text: String) -> some View {
+    func title(_ text: String) -> some View {
         Text(text)
             .fontWeight(.semibold)
-            .frame(width: 100, alignment: .trailing)
             .frame(maxHeight: .infinity, alignment: .topTrailing)
-    }
-}
-
-private struct ItemDetailMoreInfoSectionUIModel {
-    let lastAutoFilledDate: String?
-    let modificationCount: String
-    let modificationDate: String
-    let creationDate: String
-
-    init(itemContent: ItemContent) {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .full
-        dateFormatter.timeStyle = .short
-        dateFormatter.doesRelativeDateFormatting = true
-
-        let relativeDateFormatter = RelativeDateTimeFormatter()
-
-        let now = Date()
-
-        let fullDateString: (Int64) -> String = { timeInterval in
-            let timeInterval = TimeInterval(timeInterval)
-            let date = Date(timeIntervalSince1970: timeInterval)
-            let dateString = dateFormatter.string(from: date)
-            let relativeString = relativeDateFormatter.localizedString(for: date, relativeTo: now)
-            return "\(dateString) (\(relativeString))"
-        }
-
-        let item = itemContent.item
-
-        if case .login = itemContent.contentData.type,
-           let lastUseTime = item.lastUseTime,
-           lastUseTime != item.createTime {
-            lastAutoFilledDate = fullDateString(lastUseTime).capitalizingFirstLetter()
-        } else {
-            lastAutoFilledDate = nil
-        }
-
-        modificationCount = "\(item.revision) time(s)"
-        modificationDate = "Last time, \(fullDateString(item.modifyTime))"
-        creationDate = fullDateString(item.createTime).capitalizingFirstLetter()
     }
 }

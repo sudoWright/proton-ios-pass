@@ -18,29 +18,36 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import Client
+import Combine
 import Core
+import Entities
 import Factory
+import ProtonCoreFeatureSwitch
 
+@MainActor
 protocol AccountViewModelDelegate: AnyObject {
     func accountViewModelWantsToGoBack()
     func accountViewModelWantsToSignOut()
     func accountViewModelWantsToDeleteAccount()
 }
 
+@MainActor
 final class AccountViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
-    private let passPlanRepository = resolve(\SharedRepositoryContainer.passPlanRepository)
-    private let userData = resolve(\SharedDataContainer.userData)
+    private let accessRepository = resolve(\SharedRepositoryContainer.accessRepository)
+    private let userDataProvider = resolve(\SharedDataContainer.userDataProvider)
     private let logger = resolve(\SharedToolingContainer.logger)
-    private let paymentsManager = resolve(\ServiceContainer.paymentManager)
+    private let revokeCurrentSession = resolve(\SharedUseCasesContainer.revokeCurrentSession)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let paymentsManager = resolve(\ServiceContainer.paymentManager) // To remove after Dynaplans
     let isShownAsSheet: Bool
-    @Published private(set) var plan: PassPlan?
+    @Published private(set) var plan: Plan?
+    @Published private(set) var isLoading = false
 
     weak var delegate: AccountViewModelDelegate?
 
-    var username: String { userData.user.email ?? "" }
+    var username: String { userDataProvider.getUserData()?.user.email ?? "" }
 
     init(isShownAsSheet: Bool) {
         self.isShownAsSheet = isShownAsSheet
@@ -53,8 +60,8 @@ final class AccountViewModel: ObservableObject, DeinitPrintable {
             do {
                 // First get local plan to optimistically display it
                 // and then try to refresh the plan to have it updated
-                self.plan = try await self.passPlanRepository.getPlan()
-                self.plan = try await self.passPlanRepository.refreshPlan()
+                self.plan = try await self.accessRepository.getPlan()
+                self.plan = try await self.accessRepository.refreshAccess().plan
             } catch {
                 self.logger.error(error)
             }
@@ -69,35 +76,53 @@ extension AccountViewModel {
 
     func manageSubscription() {
         paymentsManager.manageSubscription { [weak self] result in
-            self?.handlePaymentsResult(result: result)
+            guard let self else { return }
+            handlePaymentsResult(result: result)
         }
     }
 
     func upgradeSubscription() {
         paymentsManager.upgradeSubscription { [weak self] result in
-            self?.handlePaymentsResult(result: result)
+            guard let self else { return }
+            handlePaymentsResult(result: result)
         }
     }
 
-    private func handlePaymentsResult(result: PaymentsManager.PaymentsResult) {
+    func openAccountSettings() {
+        router.present(for: .accountSettings)
+    }
+
+    func signOut() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            isLoading = true
+            await revokeCurrentSession()
+            isLoading = false
+            delegate?.accountViewModelWantsToSignOut()
+        }
+    }
+
+    func deleteAccount() {
+        delegate?.accountViewModelWantsToDeleteAccount()
+    }
+}
+
+private extension AccountViewModel {
+    func handlePaymentsResult(result: PaymentsManager.PaymentsResult) {
         switch result {
         case let .success(inAppPurchasePlan):
             if inAppPurchasePlan != nil {
                 refreshUserPlan()
             } else {
-                logger.debug("Payment is done but no plan is purchased")
+                logger
+                    .debug("""
+                    Payment is done but no plan is purchased.
+                     Or purchase was cancelled.
+                     Or completed, and sheet is being dismissed.
+                    """)
             }
-
         case let .failure(error):
             logger.error(error)
         }
-    }
-
-    func signOut() {
-        delegate?.accountViewModelWantsToSignOut()
-    }
-
-    func deleteAccount() {
-        delegate?.accountViewModelWantsToDeleteAccount()
     }
 }

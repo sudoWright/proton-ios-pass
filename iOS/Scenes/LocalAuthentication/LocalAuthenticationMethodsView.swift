@@ -18,12 +18,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 struct LocalAuthenticationMethodsView: View {
-    @Environment(\.dismiss) private var dismiss
     private let selectedMethod: LocalAuthenticationMethod
     private let uiModels: [LocalAuthenticationMethodUiModel]
     private let onSelect: (LocalAuthenticationMethodUiModel) -> Void

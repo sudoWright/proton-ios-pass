@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SearchResultChips: View {
     @Binding var selectedType: ItemContentType?
@@ -31,7 +33,7 @@ struct SearchResultChips: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
                 ItemCountChip(icon: IconProvider.listBullets,
-                              title: "All",
+                              title: #localized("All"),
                               count: itemCount.total,
                               isSelected: selectedType == nil,
                               action: { selectedType = nil })
@@ -74,7 +76,7 @@ private struct ItemCountChip: View {
                     Text(title)
                         .foregroundColor(Color(uiColor: PassColor.textNorm))
 
-                    Text(" \(count)")
+                    Text(verbatim: " \(count)")
                         .font(.caption)
                         .foregroundColor(Color(uiColor: PassColor.textNorm))
                 }

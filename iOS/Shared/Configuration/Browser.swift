@@ -18,54 +18,30 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import Foundation
+import Macro
 
-public enum Browser: Int, Codable, CustomStringConvertible {
+public enum Browser: Int, CaseIterable, Codable, CustomStringConvertible {
     case safari = 0
     case inAppSafari = 1
-    case chrome = 2
-    case duckDuckGo = 3
-    case firefox = 4
-    case brave = 5
-    case edge = 6
-
-    public static var thirdPartyBrowsers: [Browser] {
-        [.chrome, .duckDuckGo, .firefox, .brave, .edge]
-    }
+    case systemDefault = 2
 
     public var description: String {
         switch self {
         case .safari:
-            return "Safari"
+            "Safari"
         case .inAppSafari:
-            return "In-App Safari"
-        case .chrome:
-            return "Chrome"
-        case .duckDuckGo:
-            return "DuckDuckGo"
-        case .firefox:
-            return "Firefox"
-        case .brave:
-            return "Brave"
-        case .edge:
-            return "Edge"
+            "In-App Safari"
+        case .systemDefault:
+            #localized("System default")
         }
     }
 
     public var appScheme: String? {
         switch self {
-        case .chrome:
-            return "googlechrome://"
-        case .duckDuckGo:
-            return "ddgQuickLink://"
-        case .firefox:
-            return "firefox://open-url?url="
-        case .brave:
-            return "brave://open-url?url="
-        case .edge:
-            return "microsoft-edge://"
+        case .safari:
+            "com-apple-mobilesafari-tab://"
         default:
-            return nil
+            nil
         }
     }
 }

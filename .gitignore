@@ -64,5 +64,5 @@ Carthage/
 **/fastlane/screenshots
 **/fastlane/test_output
 
-# Obfuscated constants
-**/ObfuscatedConstants.swift
+tmp/
+LocalPackages/PassRustCore

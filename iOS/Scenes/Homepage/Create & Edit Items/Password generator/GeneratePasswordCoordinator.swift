@@ -19,6 +19,8 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import Entities
+import Macro
 import SwiftUI
 import UIKit
 
@@ -33,31 +35,26 @@ enum PasswordType: Int, CaseIterable {
     case random = 0, memorable
 }
 
-enum WordSeparator: Int, CaseIterable {
-    case hyphens = 0, spaces, periods, commas, underscores, numbers, numbersAndSymbols
-}
-
+@MainActor
 protocol GeneratePasswordCoordinatorDelegate: AnyObject {
     func generatePasswordCoordinatorWantsToPresent(viewController: UIViewController)
 }
 
+@MainActor
 final class GeneratePasswordCoordinator: DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private weak var generatePasswordViewModelDelegate: GeneratePasswordViewModelDelegate?
     private let mode: GeneratePasswordViewMode
-    private let wordProvider: WordProviderProtocol
     weak var delegate: GeneratePasswordCoordinatorDelegate?
 
     private var generatePasswordViewModel: GeneratePasswordViewModel?
     private var sheetPresentationController: UISheetPresentationController?
 
     init(generatePasswordViewModelDelegate: GeneratePasswordViewModelDelegate?,
-         mode: GeneratePasswordViewMode,
-         wordProvider: WordProviderProtocol) {
+         mode: GeneratePasswordViewMode) {
         self.generatePasswordViewModelDelegate = generatePasswordViewModelDelegate
         self.mode = mode
-        self.wordProvider = wordProvider
     }
 
     func start() {
@@ -66,7 +63,7 @@ final class GeneratePasswordCoordinator: DeinitPrintable {
             return
         }
 
-        let viewModel = GeneratePasswordViewModel(mode: mode, wordProvider: wordProvider)
+        let viewModel = GeneratePasswordViewModel(mode: mode)
         viewModel.delegate = generatePasswordViewModelDelegate
         viewModel.uiDelegate = self
         let view = GeneratePasswordView(viewModel: viewModel)
@@ -75,8 +72,7 @@ final class GeneratePasswordCoordinator: DeinitPrintable {
 
         generatePasswordViewModel = viewModel
         sheetPresentationController = viewController.sheetPresentationController
-        updateSheetHeight(passwordType: viewModel.type,
-                          isShowingAdvancedOptions: viewModel.isShowingAdvancedOptions)
+        updateSheetHeight(isShowingAdvancedOptions: viewModel.isShowingAdvancedOptions)
 
         delegate.generatePasswordCoordinatorWantsToPresent(viewController: viewController)
     }
@@ -85,7 +81,7 @@ final class GeneratePasswordCoordinator: DeinitPrintable {
 // MARK: - Private APIs
 
 extension GeneratePasswordCoordinator {
-    func updateSheetHeight(passwordType: PasswordType, isShowingAdvancedOptions: Bool) {
+    func updateSheetHeight(isShowingAdvancedOptions: Bool) {
         guard let sheetPresentationController else {
             assertionFailure("sheetPresentationController is null. Coordinator is not yet started.")
             return
@@ -94,23 +90,13 @@ extension GeneratePasswordCoordinator {
         let detent: UISheetPresentationController.Detent
         let detentIdentifier: UISheetPresentationController.Detent.Identifier
 
-        if #available(iOS 16, *) {
-            let makeCustomDetent: (Int) -> UISheetPresentationController.Detent = { height in
-                UISheetPresentationController.Detent.custom { _ in
-                    CGFloat(height)
-                }
-            }
-            detent = makeCustomDetent(isShowingAdvancedOptions ? 500 : 400)
-            detentIdentifier = detent.identifier
-        } else {
-            if isShowingAdvancedOptions {
-                detent = .large()
-                detentIdentifier = .large
-            } else {
-                detent = .medium()
-                detentIdentifier = .medium
+        let makeCustomDetent: (Int) -> UISheetPresentationController.Detent = { height in
+            UISheetPresentationController.Detent.custom { _ in
+                CGFloat(height)
             }
         }
+        detent = makeCustomDetent(isShowingAdvancedOptions ? 500 : 400)
+        detentIdentifier = detent.identifier
 
         sheetPresentationController.animateChanges {
             sheetPresentationController.detents = [detent]
@@ -122,9 +108,8 @@ extension GeneratePasswordCoordinator {
 // MARK: - GeneratePasswordViewModelUiDelegate
 
 extension GeneratePasswordCoordinator: GeneratePasswordViewModelUiDelegate {
-    func generatePasswordViewModelWantsToUpdateSheetHeight(passwordType: PasswordType,
-                                                           isShowingAdvancedOptions: Bool) {
-        updateSheetHeight(passwordType: passwordType, isShowingAdvancedOptions: isShowingAdvancedOptions)
+    func generatePasswordViewModelWantsToUpdateSheetHeight(isShowingAdvancedOptions: Bool) {
+        updateSheetHeight(isShowingAdvancedOptions: isShowingAdvancedOptions)
     }
 }
 
@@ -132,9 +117,9 @@ extension GeneratePasswordViewMode {
     var confirmTitle: String {
         switch self {
         case .createLogin:
-            return "Confirm"
+            #localized("Confirm")
         case .random:
-            return "Copy and close"
+            #localized("Copy and close")
         }
     }
 }
@@ -143,9 +128,9 @@ extension PasswordType {
     var title: String {
         switch self {
         case .random:
-            return "Random Password"
+            #localized("Random password")
         case .memorable:
-            return "Memorable Password"
+            #localized("Memorable password")
         }
     }
 }
@@ -154,49 +139,19 @@ extension WordSeparator {
     var title: String {
         switch self {
         case .hyphens:
-            return "Hyphens"
+            #localized("Hyphens")
         case .spaces:
-            return "Spaces"
+            #localized("Spaces")
         case .periods:
-            return "Periods"
+            #localized("Periods")
         case .commas:
-            return "Commas"
+            #localized("Commas")
         case .underscores:
-            return "Underscores"
+            #localized("Underscores")
         case .numbers:
-            return "Numbers"
+            #localized("Numbers")
         case .numbersAndSymbols:
-            return "Numbers and Symbols"
-        }
-    }
-
-    var value: String {
-        switch self {
-        case .hyphens:
-            return "-"
-        case .spaces:
-            return " "
-        case .periods:
-            return "."
-        case .commas:
-            return ","
-        case .underscores:
-            return "_"
-        case .numbers:
-            if let randomCharacter = AllowedCharacter.digit.rawValue.randomElement() {
-                return String(randomCharacter)
-            } else {
-                assertionFailure("Something's wrong")
-                return "0"
-            }
-        case .numbersAndSymbols:
-            let allowedCharacters = AllowedCharacter.digit.rawValue + AllowedCharacter.special.rawValue
-            if let randomCharacter = allowedCharacters.randomElement() {
-                return String(randomCharacter)
-            } else {
-                assertionFailure("Something's wrong")
-                return "&"
-            }
+            #localized("Numbers and Symbols")
         }
     }
 }

@@ -20,10 +20,11 @@
 
 import Client
 import Core
+import DesignSystem
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CustomFieldSections: View {
     let itemContentType: ItemContentType
@@ -73,11 +74,11 @@ struct TextCustomFieldSection: View {
     let onUpgrade: () -> Void
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: CustomFieldType.text.icon,
                                   color: itemContentType.normColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(title)
                     .sectionTitleText()
 
@@ -91,9 +92,8 @@ struct TextCustomFieldSection: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(kItemDetailSectionPadding)
-        .accentColor(Color(uiColor: itemContentType.normColor)) // Remove when iOS 15 is dropped
-        .tint(Color(uiColor: itemContentType.normColor))
+        .padding(DesignConstant.sectionPadding)
+        .tint(itemContentType.normColor.toColor)
         .roundedDetailSection()
         .padding(.top, 8)
     }
@@ -109,11 +109,11 @@ struct HiddenCustomFieldSection: View {
     let onUpgrade: () -> Void
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: CustomFieldType.hidden.icon,
                                   color: itemContentType.normColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(title)
                     .sectionTitleText()
 
@@ -148,16 +148,15 @@ struct HiddenCustomFieldSection: View {
             }
         }
         .animation(.default, value: isShowingText)
-        .padding(kItemDetailSectionPadding)
-        .accentColor(Color(uiColor: itemContentType.normColor)) // Remove when iOS 15 is dropped
-        .tint(Color(uiColor: itemContentType.normColor))
+        .padding(DesignConstant.sectionPadding)
+        .tint(itemContentType.normColor.toColor)
         .roundedDetailSection()
         .padding(.top, 8)
     }
 }
 
 struct TotpCustomFieldSection: View {
-    @StateObject private var totpManager: TOTPManager
+    @StateObject private var totpManager = resolve(\ServiceContainer.totpManager)
     let title: String
     let content: String
     let itemContentType: ItemContentType
@@ -171,8 +170,6 @@ struct TotpCustomFieldSection: View {
          isFreeUser: Bool,
          onSelectTotpToken: @escaping (String) -> Void,
          onUpgrade: @escaping () -> Void) {
-        let logManager = resolve(\SharedToolingContainer.logManager)
-        _totpManager = .init(wrappedValue: .init(logManager: logManager))
         self.title = title
         self.content = content
         self.itemContentType = itemContentType
@@ -182,11 +179,11 @@ struct TotpCustomFieldSection: View {
     }
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: CustomFieldType.totp.icon,
                                   color: itemContentType.normColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(title)
                     .sectionTitleText()
 
@@ -225,9 +222,8 @@ struct TotpCustomFieldSection: View {
                 }
             }
         }
-        .padding(kItemDetailSectionPadding)
-        .accentColor(Color(uiColor: itemContentType.normColor)) // Remove when iOS 15 is dropped
-        .tint(Color(uiColor: itemContentType.normColor))
+        .padding(DesignConstant.sectionPadding)
+        .tint(itemContentType.normColor.toColor)
         .roundedDetailSection()
         .padding(.top, 8)
         .onFirstAppear {

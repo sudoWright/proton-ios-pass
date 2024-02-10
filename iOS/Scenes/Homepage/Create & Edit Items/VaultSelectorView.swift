@@ -18,10 +18,13 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import DesignSystem
+import Entities
+import Factory
 import SwiftUI
-import UIComponents
 
 struct VaultSelectorView: View {
+    private let theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     let viewModel: VaultSelectorViewModel
 
@@ -29,7 +32,7 @@ struct VaultSelectorView: View {
         NavigationView {
             VStack {
                 if viewModel.isFreeUser {
-                    LimitedVaultOperationsBanner(onUpgrade: viewModel.upgrade)
+                    LimitedVaultOperationsBanner(onUpgrade: { viewModel.upgrade() })
                         .padding([.horizontal, .top])
                 }
 
@@ -54,8 +57,10 @@ struct VaultSelectorView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .theme(theme)
     }
 
+    @MainActor
     private func view(for vault: VaultListUiModel) -> some View {
         Button(action: {
             viewModel.select(vault: vault.vault)
@@ -64,11 +69,12 @@ struct VaultSelectorView: View {
             VaultRow(thumbnail: { VaultThumbnail(vault: vault.vault) },
                      title: vault.vault.name,
                      itemCount: vault.itemCount,
-                     isSelected: vault.vault.shareId == viewModel.selectedVault.shareId,
+                     isShared: vault.vault.shared,
+                     isSelected: viewModel.isSelected(vault: vault.vault),
                      height: 74)
                 .padding(.horizontal)
         })
         .buttonStyle(.plain)
-        .opacityReduced(viewModel.isFreeUser && !vault.vault.isPrimary)
+        .opacityReduced(!vault.vault.canEdit)
     }
 }

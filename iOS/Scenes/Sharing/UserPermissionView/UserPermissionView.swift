@@ -20,11 +20,12 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 //
 
+import DesignSystem
 import Entities
 import Factory
-import ProtonCore_UIFoundations
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct UserPermissionView: View {
     @Environment(\.dismiss) private var dismiss
@@ -32,20 +33,26 @@ struct UserPermissionView: View {
     @StateObject private var viewModel = UserPermissionViewModel()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                headerView
-                emailDisplayView
-                roleList
-                Spacer()
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Set access level")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundColor(PassColor.textNorm.toColor)
+            if viewModel.hasOnlyOneInvite,
+               let email = viewModel.emails.keys.first {
+                emailDisplayView(email: email)
+                roleList(email: email)
+            } else {
+                inviteeList
             }
+            Spacer()
         }
         .navigate(isActive: $viewModel.goToNextStep, destination: router.navigate(to: .shareSummary))
         .navigationBarBackButtonHidden(true)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(uiColor: PassColor.backgroundNorm))
+        .background(PassColor.backgroundNorm.toColor)
         .toolbar { toolbarContent }
     }
 
@@ -61,28 +68,119 @@ struct UserPermissionView: View {
     }
 }
 
+// MARK: - Multiple Emails
+
 private extension UserPermissionView {
-    var headerView: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            Text("Set permissions")
-                .font(.largeTitle)
-                .fontWeight(.bold)
-                .foregroundColor(PassColor.textNorm.toColor)
-            Text("Select the level of access this user will gain when they join your ‘\(viewModel.vaultName)’ vault")
-                .font(.body)
-                .foregroundColor(PassColor.textWeak.toColor)
+    var inviteeList: some View {
+        VStack {
+            HStack {
+                Text("Members")
+                    .font(.headline)
+                    .fontWeight(.bold) +
+                    Text(verbatim: " (\(viewModel.emails.count))")
+                    .font(.headline)
+                    .fontWeight(.bold)
+
+                Spacer()
+
+                setAccessLevelMenu
+            }
+            .foregroundStyle(PassColor.textWeak.toColor)
+            .frame(maxWidth: .infinity)
+
+            inviteeList(for: viewModel.emails)
         }
+        .frame(maxWidth: .infinity)
+        .scrollViewEmbeded(maxWidth: .infinity)
+    }
+
+    var setAccessLevelMenu: some View {
+        Menu {
+            Section("Set access level for all members") {
+                ForEach(ShareRole.allCases, id: \.self) { role in
+                    Button(action: {
+                        viewModel.setRoleForAll(with: role)
+                    }, label: {
+                        Text(role.title)
+                        Text(role.description)
+                    })
+                }
+            }
+        } label: {
+            Label("Set access level", systemImage: "chevron.down")
+                .labelStyle(.rightIcon)
+                .foregroundColor(PassColor.interactionNorm.toColor)
+                .padding(12)
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(PassColor.interactionNorm.toColor, lineWidth: 1))
+        }
+    }
+
+    func inviteeList(for emails: [String: ShareRole]) -> some View {
+        LazyVStack {
+            ForEach(Array(emails.keys), id: \.self) { email in
+                HStack(spacing: DesignConstant.sectionPadding) {
+                    SquircleThumbnail(data: .initials(email.initials()),
+                                      tintColor: PassColor.interactionNormMajor2,
+                                      backgroundColor: PassColor.interactionNormMinor1)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(email)
+                            .foregroundColor(PassColor.textNorm.toColor)
+                        if let currentRole = viewModel.emails[email] {
+                            HStack {
+                                Text(currentRole.title)
+                                    .foregroundColor(PassColor.textWeak.toColor)
+                            }
+                        }
+                    }
+
+                    Spacer()
+                    if let currentRole = viewModel.emails[email] {
+                        trailingView(email: email, currentRole: currentRole)
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    @ViewBuilder
+    func trailingView(email: String, currentRole: ShareRole) -> some View {
+        Menu(content: {
+            ForEach(ShareRole.allCases, id: \.self) { role in
+                Label(title: {
+                    Button(action: {
+                        viewModel.updateRole(for: email, with: role)
+                    }, label: {
+                        Text(role.title)
+                        Text(role.description)
+                    })
+                }, icon: {
+                    if currentRole == role {
+                        Image(systemName: "checkmark")
+                    }
+                })
+            }
+        }, label: { Image(uiImage: IconProvider.threeDotsVertical)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 24, height: 24)
+            .foregroundColor(PassColor.textWeak.toColor)
+        })
     }
 }
 
+// MARK: - Single Email
+
 private extension UserPermissionView {
-    var emailDisplayView: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            SquircleThumbnail(data: .initials(viewModel.email.initialsRemovingEmojis()),
-                              tintColor: ItemType.login.tintColor,
-                              backgroundColor: ItemType.login.backgroundColor)
+    func emailDisplayView(email: String) -> some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
+            SquircleThumbnail(data: .initials(email.initials()),
+                              tintColor: PassColor.interactionNormMajor2,
+                              backgroundColor: PassColor.interactionNormMinor1)
             VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.email)
+                Text(email)
                     .foregroundColor(PassColor.textNorm.toColor)
             }
         }
@@ -91,11 +189,11 @@ private extension UserPermissionView {
 }
 
 private extension UserPermissionView {
-    var roleList: some View {
+    func roleList(email: String) -> some View {
         VStack(spacing: 12) {
             ForEach(ShareRole.allCases.reversed(), id: \.self) { role in
                 Button {
-                    viewModel.select(role: role)
+                    viewModel.updateRole(for: email, with: role)
                 } label: {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -145,7 +243,7 @@ private extension UserPermissionView {
         }
 
         ToolbarItem(placement: .navigationBarTrailing) {
-            DisablableCapsuleTextButton(title: "Continue",
+            DisablableCapsuleTextButton(title: #localized("Continue"),
                                         titleColor: PassColor.textInvert,
                                         disableTitleColor: PassColor.textHint,
                                         backgroundColor: PassColor.interactionNormMajor1,
@@ -156,8 +254,6 @@ private extension UserPermissionView {
     }
 }
 
-struct UserPermissionView_Previews: PreviewProvider {
-    static var previews: some View {
-        UserPermissionView()
-    }
+#Preview("UserPermissionView Preview") {
+    UserPermissionView()
 }

@@ -20,14 +20,16 @@
 
 import Client
 import Core
+import DesignSystem
 import SwiftUI
-import UIComponents
 
+@MainActor
 protocol SortTypeListViewModelDelegate: AnyObject {
     func sortTypeListViewDidSelect(_ sortType: SortType)
 }
 
-final class SortTypeListViewModel: ObservableObject, DeinitPrintable {
+@MainActor
+final class SortTypeListViewModel: ObservableObject, DeinitPrintable, Sendable {
     deinit { print(deinitMessage) }
 
     @Published var selectedSortType: SortType {
@@ -74,7 +76,7 @@ struct SortTypeListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Sort by")
+                    Text("Sort By")
                         .navigationTitleText()
                 }
             }

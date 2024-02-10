@@ -19,11 +19,14 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Factory
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct SuffixSelectionView: View {
+    private let theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: SuffixSelectionViewModel
 
@@ -82,6 +85,7 @@ struct SuffixSelectionView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .theme(theme)
     }
 
     private func isSelected(_ suffix: Suffix) -> Bool {

@@ -19,12 +19,15 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
+@MainActor
 struct ItemDetailToolbar: ToolbarContent {
-    let viewModel: BaseItemDetailViewModel
+    @ObservedObject var viewModel: BaseItemDetailViewModel
 
     private var itemContentType: ItemContentType {
         viewModel.itemContent.type
@@ -34,31 +37,57 @@ struct ItemDetailToolbar: ToolbarContent {
         ToolbarItem(placement: .navigationBarLeading) {
             CircleButton(icon: viewModel.isShownAsSheet ? IconProvider.chevronDown : IconProvider.chevronLeft,
                          iconColor: itemContentType.normMajor2Color,
-                         backgroundColor: itemContentType.normMinor1Color,
-                         action: viewModel.goBack)
+                         backgroundColor: itemContentType.normMinor1Color) {
+                viewModel.goBack()
+            }
         }
 
         ToolbarItem(placement: .navigationBarTrailing) {
             switch viewModel.itemContent.item.itemState {
             case .active:
-                HStack {
+                HStack(spacing: 0) {
                     CapsuleLabelButton(icon: IconProvider.pencil,
-                                       title: "Edit",
+                                       title: #localized("Edit"),
                                        titleColor: PassColor.textInvert,
                                        backgroundColor: itemContentType.normMajor1Color,
-                                       action: viewModel.edit)
+                                       isDisabled: !viewModel.isAllowedToEdit) {
+                        viewModel.edit()
+                    }
+
+                    if viewModel.isAllowedToShare {
+                        CircleButton(icon: IconProvider.usersPlus,
+                                     iconColor: itemContentType.normMajor2Color,
+                                     backgroundColor: itemContentType.normMinor1Color) {
+                            viewModel.share()
+                        }
+                    }
 
                     Menu(content: {
-                        Button(action: viewModel.moveToAnotherVault,
-                               label: { Label(title: { Text("Move to another vault") },
-                                              icon: { Image(uiImage: IconProvider.folderArrowIn) }) })
+                        Button { viewModel.moveToAnotherVault() }
+                            label: { Label(title: { Text("Move to another vault") },
+                                           icon: { Image(uiImage: IconProvider.folderArrowIn) }) }
+                            .hidden(!viewModel.isAllowedToEdit)
+
+                        Button { viewModel.toggleItemPinning() }
+                            label: {
+                                Label(title: { Text(viewModel.itemContent.item.pinTitle) },
+                                      icon: { Image(uiImage: viewModel.itemContent.item.pinIcon) })
+                            }
 
                         Divider()
 
+                        if viewModel.itemContent.type == .note {
+                            Button { viewModel.copyNoteContent() }
+                                label: { Label(title: { Text("Copy note content") },
+                                               icon: { Image(uiImage: IconProvider.note) }) }
+                            Divider()
+                        }
+
                         Button(role: .destructive,
-                               action: viewModel.moveToTrash,
+                               action: { viewModel.moveToTrash() },
                                label: { Label(title: { Text("Move to trash") },
                                               icon: { Image(uiImage: IconProvider.trash) }) })
+                            .hidden(!viewModel.isAllowedToEdit)
                     }, label: {
                         CircleButton(icon: IconProvider.threeDotsVertical,
                                      iconColor: itemContentType.normMajor2Color,
@@ -68,9 +97,9 @@ struct ItemDetailToolbar: ToolbarContent {
 
             case .trashed:
                 Menu(content: {
-                    Button(action: viewModel.restore,
-                           label: { Label(title: { Text("Restore") },
-                                          icon: { Image(uiImage: IconProvider.clockRotateLeft) }) })
+                    Button { viewModel.restore() }
+                        label: { Label(title: { Text("Restore") },
+                                       icon: { Image(uiImage: IconProvider.clockRotateLeft) }) }
 
                     Divider()
 
@@ -83,6 +112,7 @@ struct ItemDetailToolbar: ToolbarContent {
                                  iconColor: itemContentType.normMajor2Color,
                                  backgroundColor: itemContentType.normMinor1Color)
                 })
+                .disabled(!viewModel.isAllowedToEdit)
             }
         }
     }

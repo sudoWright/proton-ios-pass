@@ -21,19 +21,22 @@
 import Client
 import Combine
 import Core
+import DesignSystem
 import Factory
-import ProtonCore_UIFoundations
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 import UIKit
 
 enum HomepageTab {
     case items, profile
 }
 
+@MainActor
 protocol HomepageTabDelegete: AnyObject {
     func homepageTabShouldChange(tab: HomepageTab)
     func homepageTabShouldRefreshTabIcons()
+    func homepageTabShouldHideTabbar(_ isHidden: Bool)
+    func homepageTabShouldDisableCreateButton(_ isDisabled: Bool)
 }
 
 struct HomepageTabbarView: UIViewControllerRepresentable {
@@ -55,6 +58,7 @@ struct HomepageTabbarView: UIViewControllerRepresentable {
 
     func makeCoordinator() -> Coordinator { .init() }
 
+    @MainActor
     final class Coordinator: NSObject, HomepageTabDelegete {
         var homepageTabBarController: HomepageTabBarController?
 
@@ -65,9 +69,18 @@ struct HomepageTabbarView: UIViewControllerRepresentable {
         func homepageTabShouldRefreshTabIcons() {
             homepageTabBarController?.refreshTabBarIcons()
         }
+
+        func homepageTabShouldHideTabbar(_ isHidden: Bool) {
+            homepageTabBarController?.hideTabBar(isHidden)
+        }
+
+        func homepageTabShouldDisableCreateButton(_ isDisabled: Bool) {
+            homepageTabBarController?.disableCreateButton(isDisabled)
+        }
     }
 }
 
+@MainActor
 protocol HomepageTabBarControllerDelegate: AnyObject {
     func homepageTabBarControllerDidSelectItemsTab()
     func homepageTabBarControllerWantToCreateNewItem()
@@ -81,12 +94,10 @@ final class HomepageTabBarController: UITabBarController, DeinitPrintable {
     private let profileTabView: ProfileTabView
     private var profileTabViewController: UIViewController?
 
-    private let passPlanRepository = resolve(\SharedRepositoryContainer.passPlanRepository)
+    private let accessRepository = resolve(\SharedRepositoryContainer.accessRepository)
     private let logger = resolve(\SharedToolingContainer.logger)
 
     weak var homepageTabBarControllerDelegate: HomepageTabBarControllerDelegate?
-
-    private var cancellables = Set<AnyCancellable>()
 
     init(itemsTabView: ItemsTabView, profileTabView: ProfileTabView) {
         self.itemsTabView = itemsTabView
@@ -97,17 +108,6 @@ final class HomepageTabBarController: UITabBarController, DeinitPrintable {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewWillLayoutSubviews() {
-        super.viewWillLayoutSubviews()
-        if #unavailable(iOS 16) {
-            // UITabBarController automatically embeds child VCs into a UINavigationController
-            // Which then causes 2 navigation bars stacked on top of each other because
-            // the child VCs themselves also have a navigation bar
-            // Looks like this is only the behavior before iOS 16. Safe to remove once dropped iOS 15
-            navigationController?.setNavigationBarHidden(true, animated: false)
-        }
     }
 
     override func viewDidLoad() {
@@ -165,20 +165,15 @@ extension HomepageTabBarController {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let plan = try await self.passPlanRepository.getPlan()
+                let plan = try await self.accessRepository.getPlan()
 
-                let image: UIImage
-                let selectedImage: UIImage
-                switch plan.planType {
+                let (image, selectedImage): (UIImage, UIImage) = switch plan.planType {
                 case .free:
-                    image = IconProvider.user
-                    selectedImage = IconProvider.user
-                case .plus:
-                    image = PassIcon.tabProfilePaidUnselected
-                    selectedImage = PassIcon.tabProfilePaidSelected
+                    (IconProvider.user, IconProvider.user)
+                case .business, .plus:
+                    (PassIcon.tabProfilePaidUnselected, PassIcon.tabProfilePaidSelected)
                 case .trial:
-                    image = PassIcon.tabProfileTrialUnselected
-                    selectedImage = PassIcon.tabProfileTrialSelected
+                    (PassIcon.tabProfileTrialUnselected, PassIcon.tabProfileTrialSelected)
                 }
 
                 self.profileTabViewController?.tabBarItem.image = image
@@ -186,6 +181,29 @@ extension HomepageTabBarController {
             } catch {
                 self.logger.error(error)
             }
+        }
+    }
+
+    func hideTabBar(_ isHidden: Bool) {
+        UIView.animate(withDuration: 0.7,
+                       delay: 0,
+                       usingSpringWithDamping: 0.8,
+                       initialSpringVelocity: 0.7,
+                       options: .curveEaseOut) { [weak self] in
+            guard let self else { return }
+            if isHidden {
+                tabBar.frame.origin.y = view.frame.maxY + tabBar.frame.height
+            } else {
+                tabBar.frame.origin.y = view.frame.maxY - tabBar.frame.height
+            }
+            view.layoutIfNeeded()
+        }
+    }
+
+    func disableCreateButton(_ isDisabled: Bool) {
+        UIView.animate(withDuration: 0.5) { [weak self] in
+            guard let self else { return }
+            viewControllers?[1].tabBarItem.isEnabled = !isDisabled
         }
     }
 }

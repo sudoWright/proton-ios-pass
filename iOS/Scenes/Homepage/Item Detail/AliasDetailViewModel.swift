@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import Combine
 import Core
 import Entities
 import Factory
+import Macro
 
 final class AliasDetailViewModel: BaseItemDetailViewModel, DeinitPrintable {
     deinit { print(deinitMessage) }
@@ -49,13 +51,13 @@ final class AliasDetailViewModel: BaseItemDetailViewModel, DeinitPrintable {
             guard let self else { return }
             do {
                 let alias =
-                    try await self.aliasRepository.getAliasDetailsTask(shareId: self.itemContent.shareId,
-                                                                       itemId: self.itemContent.item.itemID).value
-                self.aliasEmail = alias.email
-                self.mailboxes = alias.mailboxes
-                self.logger.info("Get alias detail successfully \(self.itemContent.debugInformation)")
+                    try await aliasRepository.getAliasDetails(shareId: itemContent.shareId,
+                                                              itemId: itemContent.item.itemID)
+                aliasEmail = alias.email
+                mailboxes = alias.mailboxes
+                logger.info("Get alias detail successfully \(itemContent.debugDescription)")
             } catch {
-                self.logger.error(error)
+                logger.error(error)
                 self.error = error
             }
         }
@@ -69,10 +71,10 @@ final class AliasDetailViewModel: BaseItemDetailViewModel, DeinitPrintable {
     }
 
     func copyAliasEmail() {
-        copyToClipboard(text: aliasEmail, message: "Alias copied")
+        copyToClipboard(text: aliasEmail, message: #localized("Alias copied"))
     }
 
     func copyMailboxEmail(_ email: String) {
-        copyToClipboard(text: email, message: "Mailbox copied")
+        copyToClipboard(text: email, message: #localized("Email address copied"))
     }
 }

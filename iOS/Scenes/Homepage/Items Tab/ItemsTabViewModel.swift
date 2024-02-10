@@ -23,29 +23,29 @@ import Combine
 import Core
 import Entities
 import Factory
+import Macro
 import SwiftUI
 
+@MainActor
 protocol ItemsTabViewModelDelegate: AnyObject {
-    func itemsTabViewModelWantsToShowSpinner()
-    func itemsTabViewModelWantsToHideSpinner()
-    func itemsTabViewModelWantsToSearch(vaultSelection: VaultSelection)
     func itemsTabViewModelWantsToCreateNewItem(type: ItemContentType)
     func itemsTabViewModelWantsToPresentVaultList()
-    func itemsTabViewModelWantsToPresentSortTypeList(selectedSortType: SortType,
-                                                     delegate: SortTypeListViewModelDelegate)
     func itemsTabViewModelWantsToShowTrialDetail()
     func itemsTabViewModelWantsViewDetail(of itemContent: ItemContent)
-    func itemsTabViewModelDidEncounter(error: Error)
 }
 
+@MainActor
 final class ItemsTabViewModel: ObservableObject, PullToRefreshable, DeinitPrintable {
     deinit { print(deinitMessage) }
 
     @AppStorage(Constants.sortTypeKey, store: kSharedUserDefaults)
     var selectedSortType = SortType.mostRecent
 
+    @Published private(set) var pinnedItems: [ItemUiModel]?
     @Published private(set) var banners: [InfoBanner] = []
-    @Published var itemToBePermanentlyDeleted: ItemTypeIdentifiable? {
+    @Published var isEditMode = false
+    @Published var shouldShowSyncProgress = false
+    @Published var itemToBePermanentlyDeleted: (any ItemTypeIdentifiable)? {
         didSet {
             if itemToBePermanentlyDeleted != nil {
                 showingPermanentDeletionAlert = true
@@ -56,15 +56,25 @@ final class ItemsTabViewModel: ObservableObject, PullToRefreshable, DeinitPrinta
     @Published var showingPermanentDeletionAlert = false
 
     private let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
-    private let passPlanRepository = resolve(\SharedRepositoryContainer.passPlanRepository)
+    private let accessRepository = resolve(\SharedRepositoryContainer.accessRepository)
     private let credentialManager = resolve(\SharedServiceContainer.credentialManager)
     private let logger = resolve(\SharedToolingContainer.logger)
     private let preferences = resolve(\SharedToolingContainer.preferences)
+    private let loginMethod = resolve(\SharedDataContainer.loginMethod)
     private let getPendingUserInvitations = resolve(\UseCasesContainer.getPendingUserInvitations)
+    private let currentSelectedItems = resolve(\DataStreamContainer.currentSelectedItems)
+    private let doTrashSelectedItems = resolve(\UseCasesContainer.trashSelectedItems)
+    private let doRestoreSelectedItems = resolve(\UseCasesContainer.restoreSelectedItems)
+    private let doPermanentlyDeleteSelectedItems = resolve(\UseCasesContainer.permanentlyDeleteSelectedItems)
+    private let getAllPinnedItems = resolve(\UseCasesContainer.getAllPinnedItems)
+    private let symmetricKeyProvider = resolve(\SharedDataContainer.symmetricKeyProvider)
+    private let canEditItem = resolve(\SharedUseCasesContainer.canEditItem)
+    private let openAutoFillSettings = resolve(\UseCasesContainer.openAutoFillSettings)
+
     let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
     let itemContextMenuHandler = resolve(\SharedServiceContainer.itemContextMenuHandler)
 
-    private let router = resolve(\RouterContainer.mainUIKitSwiftUIRouter)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
 
     weak var delegate: ItemsTabViewModelDelegate?
     private var inviteRefreshTask: Task<Void, Never>?
@@ -77,6 +87,14 @@ final class ItemsTabViewModel: ObservableObject, PullToRefreshable, DeinitPrinta
     init() {
         setUp()
     }
+
+    func loadPinnedItems() async {
+        guard let symmetricKey = try? symmetricKeyProvider.getSymmetricKey(),
+              let newPinnedItems = try? await getAllPinnedItems()
+              .compactMap({ try? $0.toItemUiModel(symmetricKey) })
+        else { return }
+        pinnedItems = Array(newPinnedItems.prefix(5))
+    }
 }
 
 // MARK: - Private APIs
@@ -84,17 +102,53 @@ final class ItemsTabViewModel: ObservableObject, PullToRefreshable, DeinitPrinta
 private extension ItemsTabViewModel {
     func setUp() {
         vaultsManager.attach(to: self, storeIn: &cancellables)
+
+        currentSelectedItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         getPendingUserInvitations()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] invites in
-                self?.refreshBanners(invites)
+                guard let self else { return }
+                refreshBanners(invites)
             }
             .store(in: &cancellables)
 
         NotificationCenter.default
             .publisher(for: UIApplication.willEnterForegroundNotification)
             .sink { [weak self] _ in
-                self?.refreshBanners()
+                guard let self else { return }
+                refreshBanners()
+            }
+            .store(in: &cancellables)
+
+        // Show the progress if after 5 seconds after logging in and items are not yet loaded
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(seconds: 5)
+
+            if await loginMethod.isManualLogIn(),
+               case .loading = vaultsManager.state {
+                shouldShowSyncProgress = true
+            }
+        }
+
+        getAllPinnedItems()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] pinnedItems in
+                guard let self,
+                      let symmetricKey = try? symmetricKeyProvider.getSymmetricKey(),
+                      let pinnedItems else {
+                    return
+                }
+                let firstPinnedItems = Array(pinnedItems.prefix(5))
+                self.pinnedItems = firstPinnedItems.compactMap { try? $0.toItemUiModel(symmetricKey) }
             }
             .store(in: &cancellables)
     }
@@ -103,51 +157,64 @@ private extension ItemsTabViewModel {
         inviteRefreshTask?.cancel()
         inviteRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            self.banners.removeAll()
+            var banners = [InfoBanner]()
             if let invites, !invites.isEmpty {
-                self.banners.append(invites.toInfoBanners)
+                if let newUserInvite = invites.first(where: { $0.fromNewUser }) {
+                    router.present(for: .acceptRejectInvite(newUserInvite))
+                } else {
+                    banners.append(invites.toInfoBanners)
+                }
             }
             if banners.isEmpty {
-                await fillLocalBanners()
+                await banners.append(contentsOf: localBanners())
             }
+            self.banners = banners
         }
     }
 
-    @MainActor
-    func fillLocalBanners() async {
+    func localBanners() async -> [InfoBanner] {
         do {
+            var banners = [InfoBanner]()
             for banner in InfoBanner.allCases {
                 if preferences.dismissedBannerIds.contains(where: { $0 == banner.id }) {
-                    break
+                    continue
                 }
 
+                var shouldShow = true
                 switch banner {
                 case .trial:
-                    // If not in trial, consider dismissed
-                    let plan = try await passPlanRepository.getPlan()
-                    switch plan.planType {
-                    case .trial:
-                        break
-                    default:
-                        break
-                    }
+                    let plan = try await accessRepository.getPlan()
+                    shouldShow = plan.isInTrial
 
                 case .autofill:
-                    // We don't show the banner if AutoFill extension is enabled
-                    // consider dismissed in this case
-                    if await credentialManager.isAutoFillEnabled {
-                        // dismissed = true
-                        break
-                    }
+                    shouldShow = await !credentialManager.isAutoFillEnabled
 
                 default:
                     break
                 }
-                banners.append(banner)
+
+                if shouldShow {
+                    banners.append(banner)
+                }
             }
+            return banners
         } catch {
             logger.error(error)
-            delegate?.itemsTabViewModelDidEncounter(error: error)
+            router.display(element: .displayErrorBanner(error))
+            return []
+        }
+    }
+
+    func selectOrDeselect(_ item: any ItemIdentifiable) {
+        var items = currentSelectedItems.value
+        if items.contains(item) {
+            items.removeAll(where: { $0.isEqual(with: item) })
+        } else {
+            items.append(item)
+        }
+        currentSelectedItems.send(items)
+        if items.isEmpty {
+            isEditMode = false
         }
     }
 }
@@ -155,8 +222,95 @@ private extension ItemsTabViewModel {
 // MARK: - Public APIs
 
 extension ItemsTabViewModel {
-    func search() {
-        delegate?.itemsTabViewModelWantsToSearch(vaultSelection: vaultsManager.vaultSelection)
+    @Sendable
+    func forceSyncIfNotEditMode() async {
+        if !isEditMode {
+            await forceSync()
+        }
+    }
+
+    func search(pinnedItems: Bool = false) {
+        if pinnedItems {
+            router.present(for: .search(.pinned))
+        } else {
+            router.present(for: .search(.all(vaultsManager.vaultSelection)))
+        }
+    }
+
+    func isSelected(_ item: any ItemIdentifiable) -> Bool {
+        currentSelectedItems.value.contains(item)
+    }
+
+    func isEditable(_ item: any ItemIdentifiable) -> Bool {
+        canEditItem(vaults: vaultsManager.getAllVaults(), item: item)
+    }
+
+    func presentVaultListToMoveSelectedItems() {
+        let items = currentSelectedItems.value
+        router.present(for: .moveItemsBetweenVaults(.selectedItems(items)))
+    }
+
+    func trashSelectedItems() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                router.display(element: .globalLoading(shouldShow: true))
+                let items = currentSelectedItems.value
+                try await doTrashSelectedItems(items)
+                currentSelectedItems.send([])
+                let message = #localized("%lld items moved to trash", items.count)
+                router.display(element: .infosMessage(message, config: .dismissAndRefresh))
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+
+    func restoreSelectedItems() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                router.display(element: .globalLoading(shouldShow: true))
+                let items = currentSelectedItems.value
+                try await doRestoreSelectedItems(items)
+                currentSelectedItems.send([])
+                let message = #localized("Restored %lld items", items.count)
+                router.display(element: .successMessage(message, config: .dismissAndRefresh))
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+
+    func permanentlyDeleteSelectedItems() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                router.display(element: .globalLoading(shouldShow: true))
+                let items = currentSelectedItems.value
+                try await doPermanentlyDeleteSelectedItems(items)
+                currentSelectedItems.send([])
+                let message = #localized("Permanently deleted %lld items", items.count)
+                router.display(element: .infosMessage(message, config: .dismissAndRefresh))
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+
+    func askForBulkPermanentDeleteConfirmation() {
+        let items = currentSelectedItems.value
+        guard !items.isEmpty else {
+            assertionFailure("No selected items to permanently delete")
+            return
+        }
+        router.alert(.bulkPermanentDeleteConfirmation(itemCount: items.count))
     }
 
     func createNewItem(type: ItemContentType) {
@@ -176,13 +330,13 @@ extension ItemsTabViewModel {
         case .trial:
             delegate?.itemsTabViewModelWantsToShowTrialDetail()
         case .autofill:
-            UIApplication.shared.openPasswordSettings()
+            openAutoFillSettings()
+        case .aliases:
+            router.navigate(to: .urlPage(urlString: "https://proton.me/support/pass-alias-ios"))
         case let .invite(invites: invites):
             if let firstInvite = invites.first {
-                router.presentSheet(for: .acceptRejectInvite(firstInvite))
+                router.present(for: .acceptRejectInvite(firstInvite))
             }
-        default:
-            break
         }
     }
 
@@ -195,12 +349,7 @@ extension ItemsTabViewModel {
         }
     }
 
-    func presentSortTypeList() {
-        delegate?.itemsTabViewModelWantsToPresentSortTypeList(selectedSortType: selectedSortType,
-                                                              delegate: self)
-    }
-
-    func viewDetail(of item: ItemUiModel) {
+    func viewDetail(of item: any ItemIdentifiable) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -209,13 +358,24 @@ extension ItemsTabViewModel {
                     self.delegate?.itemsTabViewModelWantsViewDetail(of: itemContent)
                 }
             } catch {
-                self.delegate?.itemsTabViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func showFilterOptions() {
-        router.presentSheet(for: .filterItems)
+    func handleSelection(_ item: any ItemIdentifiable) {
+        if isEditMode {
+            selectOrDeselect(item)
+        } else {
+            viewDetail(of: item)
+        }
+    }
+
+    func handleThumbnailSelection(_ item: any ItemIdentifiable) {
+        if isEditable(item) {
+            selectOrDeselect(item)
+            isEditMode = true
+        }
     }
 
     func permanentlyDelete() {
@@ -235,13 +395,24 @@ extension ItemsTabViewModel: SortTypeListViewModelDelegate {
 // MARK: - SyncEventLoopPullToRefreshDelegate
 
 extension ItemsTabViewModel: SyncEventLoopPullToRefreshDelegate {
-    func pullToRefreshShouldStopRefreshing() {
-        stopRefreshing()
+    nonisolated func pullToRefreshShouldStopRefreshing() {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await stopRefreshing()
+        }
     }
 }
 
 private extension [UserInvite] {
     var toInfoBanners: InfoBanner {
         .invite(self)
+    }
+}
+
+private extension [ItemIdentifiable] {
+    func contains(_ otherItem: any ItemIdentifiable) -> Bool {
+        contains(where: { $0.isEqual(with: otherItem) })
     }
 }

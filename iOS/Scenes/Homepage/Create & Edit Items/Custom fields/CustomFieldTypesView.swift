@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CustomFieldTypesView: View {
     let onSelect: (CustomFieldType) -> Void
@@ -64,22 +66,22 @@ extension CustomFieldType {
     var title: String {
         switch self {
         case .text:
-            return "Text"
+            #localized("Text")
         case .totp:
-            return "2FA secret (TOTP)"
+            #localized("2FA secret key (TOTP)")
         case .hidden:
-            return "Hidden"
+            #localized("Hidden")
         }
     }
 
     var icon: UIImage {
         switch self {
         case .text:
-            return IconProvider.textAlignLeft
+            IconProvider.textAlignLeft
         case .totp:
-            return IconProvider.lock
+            IconProvider.lock
         case .hidden:
-            return IconProvider.eyeSlash
+            IconProvider.eyeSlash
         }
     }
 }

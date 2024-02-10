@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreditCardDetailView: View {
     @StateObject private var viewModel: CreditCardDetailViewModel
@@ -53,16 +54,22 @@ private extension CreditCardDetailView {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
-                    ItemDetailTitleView(itemContent: viewModel.itemContent, vault: viewModel.vault)
+                    ItemDetailTitleView(itemContent: viewModel.itemContent,
+                                        vault: viewModel.vault?.vault,
+                                        shouldShowVault: viewModel.shouldShowVault)
                         .padding(.bottom, 40)
 
                     detailSection
 
                     if !viewModel.itemContent.note.isEmpty {
                         NoteDetailSection(itemContent: viewModel.itemContent,
-                                          vault: viewModel.vault)
+                                          vault: viewModel.vault?.vault)
                             .padding(.top, 8)
                     }
+
+                    ItemDetailHistorySection(itemContent: viewModel.itemContent,
+                                             itemHistoryEnable: viewModel.itemHistoryEnabled,
+                                             action: { viewModel.showItemHistory() })
 
                     ItemDetailMoreInfoSection(isExpanded: $viewModel.moreInfoSectionExpanded,
                                               itemContent: viewModel.itemContent)
@@ -81,50 +88,51 @@ private extension CreditCardDetailView {
 
 private extension CreditCardDetailView {
     var detailSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
+        VStack(spacing: DesignConstant.sectionPadding) {
             cardholderNameRow
             PassSectionDivider()
             cardNumberRow
+            PassSectionDivider()
+            expirationDateRow
             PassSectionDivider()
             verificationNumberRow
             if !viewModel.pin.isEmpty {
                 PassSectionDivider()
                 pinRow
             }
-            PassSectionDivider()
-            expirationDateRow
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedDetailSection()
     }
 
     var cardholderNameRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.user, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Cardholder name")
                     .sectionTitleText()
 
                 UpsellableDetailText(text: viewModel.cardholderName,
-                                     placeholder: "Empty cardholder name",
+                                     placeholder: #localized("Empty"),
                                      shouldUpgrade: false,
-                                     upgradeTextColor: tintColor,
-                                     onUpgrade: viewModel.upgrade)
+                                     upgradeTextColor: tintColor) {
+                    viewModel.upgrade()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyCardholderName)
+            .onTapGesture { viewModel.copyCardholderName() }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
             if !viewModel.isFreeUser, !viewModel.cardholderName.isEmpty {
-                Button(action: viewModel.copyCardholderName) {
+                Button { viewModel.copyCardholderName() } label: {
                     Text("Copy")
                 }
 
                 Button(action: {
-                    viewModel.showLarge(viewModel.cardholderName)
+                    viewModel.showLarge(.text(viewModel.cardholderName))
                 }, label: {
                     Text("Show large")
                 })
@@ -135,25 +143,25 @@ private extension CreditCardDetailView {
     @ViewBuilder
     var cardNumberRow: some View {
         let shouldShowOptions = !viewModel.isFreeUser && !viewModel.cardNumber.isEmpty
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.creditCard, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Card number")
                     .sectionTitleText()
 
                 UpsellableDetailText(text: isShowingCardNumber ?
                     viewModel.cardNumber.toCreditCardNumber() : viewModel.cardNumber
                     .toMaskedCreditCardNumber(),
-                    placeholder: "Empty credit card number",
+                    placeholder: #localized("Empty"),
                     shouldUpgrade: viewModel.isFreeUser,
                     upgradeTextColor: tintColor,
-                    onUpgrade: viewModel.upgrade)
+                    onUpgrade: { viewModel.upgrade() })
                     .animation(.default, value: isShowingCardNumber)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyCardNumber)
+            .onTapGesture { viewModel.copyCardNumber() }
 
             Spacer()
 
@@ -166,7 +174,7 @@ private extension CreditCardDetailView {
                     .animationsDisabled()
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
             if shouldShowOptions {
                 Button(action: {
@@ -177,7 +185,7 @@ private extension CreditCardDetailView {
                     Text(isShowingCardNumber ? "Conceal" : "Reveal")
                 })
 
-                Button(action: viewModel.copyCardNumber) {
+                Button { viewModel.copyCardNumber() } label: {
                     Text("Copy")
                 }
             }
@@ -187,24 +195,24 @@ private extension CreditCardDetailView {
     @ViewBuilder
     var verificationNumberRow: some View {
         let shouldShowOptions = !viewModel.isFreeUser && !viewModel.verificationNumber.isEmpty
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: PassIcon.shieldCheck, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Verification number")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Security code")
                     .sectionTitleText()
 
                 UpsellableDetailText(text: isShowingVerificationNumber ?
                     viewModel.verificationNumber :
                     String(repeating: "•", count: viewModel.verificationNumber.count),
-                    placeholder: "Empty verification number",
+                    placeholder: #localized("Empty"),
                     shouldUpgrade: false,
                     upgradeTextColor: tintColor,
-                    onUpgrade: viewModel.upgrade)
+                    onUpgrade: { viewModel.upgrade() })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyVerificationNumber)
+            .onTapGesture { viewModel.copyVerificationNumber() }
             .animation(.default, value: isShowingVerificationNumber)
 
             Spacer()
@@ -218,7 +226,7 @@ private extension CreditCardDetailView {
                     .animationsDisabled()
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
             if shouldShowOptions {
                 Button(action: {
@@ -229,7 +237,7 @@ private extension CreditCardDetailView {
                     Text(isShowingVerificationNumber ? "Conceal" : "Reveal")
                 })
 
-                Button(action: viewModel.copyVerificationNumber) {
+                Button { viewModel.copyVerificationNumber() } label: {
                     Text("Copy")
                 }
             }
@@ -239,11 +247,11 @@ private extension CreditCardDetailView {
     @ViewBuilder
     var pinRow: some View {
         let shouldShowOptions = !viewModel.isFreeUser && !viewModel.pin.isEmpty
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.grid3, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("PIN")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("PIN number")
                     .sectionTitleText()
 
                 UpsellableDetailText(text: isShowingPIN ?
@@ -251,7 +259,7 @@ private extension CreditCardDetailView {
                     placeholder: nil,
                     shouldUpgrade: false,
                     upgradeTextColor: tintColor,
-                    onUpgrade: viewModel.upgrade)
+                    onUpgrade: { viewModel.upgrade() })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -268,7 +276,7 @@ private extension CreditCardDetailView {
                     .animationsDisabled()
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
             if shouldShowOptions {
                 Button(action: {
@@ -283,21 +291,22 @@ private extension CreditCardDetailView {
     }
 
     var expirationDateRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.calendarDay, color: tintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Expires on")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Expiration date")
                     .sectionTitleText()
 
                 UpsellableDetailText(text: viewModel.expirationDate,
                                      placeholder: nil,
                                      shouldUpgrade: false,
-                                     upgradeTextColor: tintColor,
-                                     onUpgrade: viewModel.upgrade)
+                                     upgradeTextColor: tintColor) {
+                    viewModel.upgrade()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
     }
 }

@@ -19,7 +19,9 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import UIKit
 
 enum ItemTypeFilterOption: Equatable, Hashable {
@@ -43,9 +45,9 @@ enum ItemTypeFilterOption: Equatable, Hashable {
     func uiModel(from itemCount: ItemCount) -> ItemTypeFilterOptionUiModel {
         switch self {
         case .all:
-            return .init(icon: IconProvider.grid2, title: "All", count: itemCount.total)
+            .init(icon: IconProvider.grid2, title: #localized("All"), count: itemCount.total)
         case let .precise(type):
-            return type.uiModel(from: itemCount)
+            type.uiModel(from: itemCount)
         }
     }
 }
@@ -58,17 +60,42 @@ struct ItemTypeFilterOptionUiModel {
 
 private extension ItemContentType {
     func uiModel(from itemCount: ItemCount) -> ItemTypeFilterOptionUiModel {
-        let count: Int
-        switch self {
+        let count: Int = switch self {
         case .login:
-            count = itemCount.login
+            itemCount.login
         case .alias:
-            count = itemCount.alias
+            itemCount.alias
         case .note:
-            count = itemCount.note
+            itemCount.note
         case .creditCard:
-            count = itemCount.creditCard
+            itemCount.creditCard
         }
         return .init(icon: regularIcon, title: filterTitle, count: count)
+    }
+}
+
+/// Conform to `RawRepresentable` to support `@AppStorage`
+/// This extension can be removed after moving away from `@AppStorage`
+extension ItemTypeFilterOption: RawRepresentable {
+    var rawValue: Int {
+        switch self {
+        case .all:
+            -1
+        case let .precise(type):
+            type.rawValue
+        }
+    }
+
+    init?(rawValue: Int) {
+        switch rawValue {
+        case -1:
+            self = .all
+        default:
+            if let type = ItemContentType(rawValue: rawValue) {
+                self = .precise(type)
+            } else {
+                return nil
+            }
+        }
     }
 }

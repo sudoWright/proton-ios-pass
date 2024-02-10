@@ -20,32 +20,51 @@
 
 import Core
 import CoreImage.CIFilterBuiltins
-import ProtonCore_UIFoundations
+import DesignSystem
+import Factory
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
+
+enum FullScreenData: Sendable {
+    case password(String)
+    case text(String)
+
+    var text: String {
+        switch self {
+        case let .password(password):
+            password
+        case let .text(text):
+            text
+        }
+    }
+}
 
 struct FullScreenView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var mode: Mode = .text
     @State private var originalBrightness: CGFloat = 0.5
     @State private var percentage: Double = 0.5
-    let text: String
-    let theme: Theme
+    private let theme = resolve(\SharedToolingContainer.theme)
+    let data: FullScreenData
 
     enum Mode {
         case text, qr
 
         var systemImageName: String {
             switch self {
-            case .text: return "textformat.abc"
-            case .qr: return "qrcode"
+            case .text:
+                "textformat.abc"
+            case .qr:
+                "qrcode"
             }
         }
 
         var oppositeMode: Mode {
             switch self {
-            case .text: return .qr
-            case .qr: return .text
+            case .text:
+                .qr
+            case .qr:
+                .text
             }
         }
     }
@@ -53,14 +72,17 @@ struct FullScreenView: View {
     var body: some View {
         NavigationView {
             ZStack {
+                Color(uiColor: PassColor.backgroundNorm)
+                    .ignoresSafeArea()
+
                 Group {
                     switch mode {
                     case .text:
                         FullScreenTextView(originalBrightness: $originalBrightness,
                                            percentage: $percentage,
-                                           text: text)
+                                           data: data)
                     case .qr:
-                        QrCodeView(text: text)
+                        QrCodeView(text: data.text)
                     }
                 }
                 .padding()
@@ -70,6 +92,7 @@ struct FullScreenView: View {
             .toolbar { toolbarContent }
         }
         .navigationViewStyle(.stack)
+        .theme(theme)
         .onAppear {
             originalBrightness = UIScreen.main.brightness
             UIScreen.main.brightness = CGFloat(1.0)
@@ -102,23 +125,33 @@ struct FullScreenView: View {
 private struct FullScreenTextView: View {
     @Binding var originalBrightness: CGFloat
     @Binding var percentage: Double
-    let text: String
+    let data: FullScreenData
 
     var body: some View {
         VStack {
             Spacer()
-            Text(verbatim: text)
-                .font(.system(size: (percentage + 1) * 24))
-                .fontWeight(.semibold)
+
+            switch data {
+            case let .password(password):
+                Text(PasswordUtils.generateColoredPassword(password))
+                    .font(.system(size: (percentage + 1) * 24))
+                    .fontWeight(.semibold)
+            case let .text(text):
+                Text(verbatim: text)
+                    .font(.system(size: (percentage + 1) * 24))
+                    .fontWeight(.semibold)
+            }
+
             Spacer()
             HStack {
-                Text("A")
+                Text(verbatim: "A")
                 Slider(value: $percentage)
                     .tint(Color(uiColor: PassColor.interactionNorm))
-                Text("A")
+                Text(verbatim: "A")
                     .font(.title)
             }
         }
+        .foregroundColor(PassColor.textNorm.toColor)
     }
 }
 

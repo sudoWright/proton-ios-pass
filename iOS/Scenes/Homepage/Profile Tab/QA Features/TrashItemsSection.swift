@@ -19,33 +19,28 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 struct TrashItemsSection: View {
-    private let bannerManager: BannerManager
-
-    init(bannerManager: BannerManager) {
-        self.bannerManager = bannerManager
-    }
+    init() {}
 
     var body: some View {
         NavigationLink(destination: {
-            TrashItemsView(bannerManager: bannerManager)
+            TrashItemsView()
         }, label: {
-            Text("Trash all items")
+            Text(verbatim: "Trash all items")
         })
     }
 }
 
 private struct TrashItemsView: View {
-    @StateObject private var viewModel: TrashItemsViewModel
-    @State private var selectedUiModel: VaultListUiModel?
+    @StateObject private var viewModel = TrashItemsViewModel()
+    @State private var selectedVault: VaultListUiModel?
 
-    init(bannerManager: BannerManager) {
-        _viewModel = .init(wrappedValue: .init(bannerManager: bannerManager))
-    }
+    init() {}
 
     var body: some View {
         switch viewModel.state {
@@ -62,10 +57,10 @@ private struct TrashItemsView: View {
     @ViewBuilder
     private func vaultList(_ uiModels: [VaultListUiModel]) -> some View {
         let showingAlert = Binding<Bool>(get: {
-            selectedUiModel != nil
+            selectedVault != nil
         }, set: { newValue in
             if !newValue {
-                selectedUiModel = nil
+                selectedVault = nil
             }
         })
         Form {
@@ -74,48 +69,59 @@ private struct TrashItemsView: View {
                     let vault = uiModel.vault
                     let icon = vault.displayPreferences.icon.icon.bigImage
                     let color = vault.displayPreferences.color.color.color
-                    Button(action: {
-                        selectedUiModel = uiModel
-                    }, label: {
-                        VaultRow(thumbnail: {
-                                     CircleButton(icon: icon,
-                                                  iconColor: color,
-                                                  backgroundColor: color.withAlphaComponent(0.16))
-                                 },
-                                 title: vault.name,
-                                 itemCount: uiModel.itemCount,
-                                 isSelected: false,
-                                 height: 44)
-                    })
-                    .buttonStyle(.plain)
+
+                    VStack {
+                        Button(action: {
+                            selectedVault = uiModel
+                        }, label: {
+                            VaultRow(thumbnail: {
+                                         CircleButton(icon: icon,
+                                                      iconColor: color,
+                                                      backgroundColor: color.withAlphaComponent(0.16))
+                                     },
+                                     title: vault.name,
+                                     itemCount: uiModel.itemCount,
+                                     isShared: uiModel.vault.shared,
+                                     isSelected: false,
+                                     height: 44)
+                        })
+                        .buttonStyle(.plain)
+
+                        Text(vault.shareId)
+                            .foregroundStyle(PassColor.textWeak.toColor)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }, header: {
-                Text("\(uiModels.count) vault(s) in total")
+                Text(verbatim: "\(uiModels.count) vault(s) in total")
             })
         }
-        .navigationTitle("Select to trash all items")
-        .alert("Trash all items",
+        .navigationTitle(Text(verbatim: "Select to trash all items"))
+        .alert(Text(verbatim: "Trash all items"),
                isPresented: showingAlert,
                actions: {
-                   Button(role: .cancel, label: { Text("Cancel") })
+                   Button(role: .cancel, label: { Text(verbatim: "Cancel") })
                    Button(role: .destructive,
                           action: {
-                              if let selectedUiModel {
-                                  viewModel.trashItems(for: selectedUiModel.vault)
+                              if let selectedVault {
+                                  viewModel.trashItems(for: selectedVault.vault)
                               }
                           },
                           label: {
-                              Text("Yes")
+                              Text(verbatim: "Yes")
                           })
                },
                message: {
-                   if let selectedUiModel {
-                       Text("Vault \"\(selectedUiModel.vault.name)\" with \(selectedUiModel.itemCount) item(s)")
+                   if let selectedVault {
+                       Text(verbatim: "Vault \"\(selectedVault.vault.name)\" with \(selectedVault.itemCount) item(s)")
                    }
                })
     }
 }
 
+@MainActor
 private final class TrashItemsViewModel: ObservableObject {
     enum State {
         case loading
@@ -127,10 +133,9 @@ private final class TrashItemsViewModel: ObservableObject {
 
     private let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
     private let shareRepository = resolve(\SharedRepositoryContainer.shareRepository)
-    private let bannerManager: BannerManager
+    private let bannerManager = resolve(\SharedViewContainer.bannerManager)
 
-    init(bannerManager: BannerManager) {
-        self.bannerManager = bannerManager
+    init() {
         loadVaults()
     }
 

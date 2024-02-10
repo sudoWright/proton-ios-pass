@@ -19,11 +19,15 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Factory
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateAliasLiteView: View {
+    private let theme = resolve(\SharedToolingContainer.theme)
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: CreateAliasLiteViewModel
     @FocusState private var focusedField: Field?
@@ -57,11 +61,11 @@ struct CreateAliasLiteView: View {
                                                 tintColor: ItemContentType.login.normMajor1Color,
                                                 suffixSelection: viewModel.suffixSelection,
                                                 prefixError: viewModel.prefixError,
-                                                onSelectSuffix: viewModel.showSuffixSelection)
+                                                onSelectSuffix: { viewModel.showSuffixSelection() })
                         }
 
                         MailboxSection(mailboxSelection: viewModel.mailboxSelection, mode: .create)
-                            .onTapGesture(perform: viewModel.showMailboxSelection)
+                            .onTapGesture { viewModel.showMailboxSelection() }
 
                         if !isShowingAdvancedOptions {
                             AdvancedOptionsSection(isShowingAdvancedOptions: $isShowingAdvancedOptions)
@@ -99,6 +103,7 @@ struct CreateAliasLiteView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .theme(theme)
     }
 
     @ViewBuilder
@@ -121,14 +126,14 @@ struct CreateAliasLiteView: View {
 
     private var buttons: some View {
         HStack(spacing: 16) {
-            CapsuleTextButton(title: "Cancel",
+            CapsuleTextButton(title: #localized("Cancel"),
                               titleColor: PassColor.textWeak,
                               backgroundColor: PassColor.textDisabled,
                               height: 44,
                               action: dismiss.callAsFunction)
 
             if viewModel.canCreateAlias {
-                DisablableCapsuleTextButton(title: "Confirm",
+                DisablableCapsuleTextButton(title: #localized("Confirm"),
                                             titleColor: PassColor.textInvert,
                                             disableTitleColor: PassColor.textHint,
                                             backgroundColor: PassColor.loginInteractionNormMajor1,
@@ -139,7 +144,7 @@ struct CreateAliasLiteView: View {
             } else {
                 UpgradeButton(backgroundColor: PassColor.loginInteractionNormMajor1,
                               height: 44,
-                              action: viewModel.upgrade)
+                              action: { viewModel.upgrade() })
             }
         }
     }

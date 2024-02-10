@@ -19,11 +19,12 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import DesignSystem
 import Factory
 import SafariServices
-import UIComponents
 import UIKit
 
+@MainActor
 final class UrlOpener {
     private let preferences = resolve(\SharedToolingContainer.preferences)
     weak var rootViewController: UIViewController?

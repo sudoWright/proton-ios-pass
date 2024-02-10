@@ -19,14 +19,15 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 enum PrefixUtils {
     static func generatePrefix(fromTitle title: String) -> String {
         var lowercasedTitle = title.lowercased()
-        let allowedCharacters = AliasPrefixValidator.allowedCharacters
+        let allowedCharacters = Constants.Utils.prefixAllowedCharacters
         lowercasedTitle.unicodeScalars.removeAll(where: { !allowedCharacters.contains($0) })
         return String(lowercasedTitle.prefix(40))
     }
@@ -45,13 +46,15 @@ struct PrefixSuffixSection<Field: Hashable>: View {
     var onSelectSuffix: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: kItemDetailSectionPadding) {
+        VStack(alignment: .leading, spacing: DesignConstant.sectionPadding) {
             prefixRow
             PassSectionDivider()
             suffixRow
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedEditableSection()
+        .accentColor(PassColor.interactionNorm.toColor)
+        .tint(PassColor.interactionNorm.toColor)
     }
 
     private var prefixRow: some View {
@@ -89,24 +92,25 @@ struct PrefixSuffixSection<Field: Hashable>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: prefix.isEmpty)
     }
 
     @ViewBuilder
     private var suffixRow: some View {
         HStack {
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Suffix")
                     .sectionTitleText()
 
                 if isLoading {
                     ZStack {
                         // Dummy text to make ZStack occupy a correct height
-                        Text("Dummy text")
+                        Text(verbatim: "Dummy text")
                             .opacity(0)
-                        AnimatingGradient(tintColor: tintColor)
+                        SkeletonBlock(tintColor: tintColor)
                             .clipShape(Capsule())
+                            .shimmering()
                     }
                 } else {
                     Text(suffixSelection.selectedSuffixString)
@@ -117,7 +121,7 @@ struct PrefixSuffixSection<Field: Hashable>: View {
             Spacer()
             ItemDetailSectionIcon(icon: IconProvider.chevronDown)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animationsDisabled()
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelectSuffix)

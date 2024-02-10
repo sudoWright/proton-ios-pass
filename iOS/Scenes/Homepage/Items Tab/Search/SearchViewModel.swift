@@ -22,7 +22,9 @@ import Client
 import Combine
 import Core
 import CryptoKit
+import Entities
 import Factory
+import Macro
 import SwiftUI
 
 enum SearchViewState {
@@ -40,13 +42,14 @@ enum SearchViewState {
     case error(Error)
 }
 
+@MainActor
 protocol SearchViewModelDelegate: AnyObject {
     func searchViewModelWantsToViewDetail(of itemContent: ItemContent)
     func searchViewModelWantsToPresentSortTypeList(selectedSortType: SortType,
                                                    delegate: SortTypeListViewModelDelegate)
-    func searchViewModelWantsDidEncounter(error: Error)
 }
 
+@MainActor
 final class SearchViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -59,18 +62,17 @@ final class SearchViewModel: ObservableObject, DeinitPrintable {
 
     // Injected properties
     private let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
-    private let shareRepository = resolve(\SharedRepositoryContainer.shareRepository)
     private let searchEntryDatasource = resolve(\SharedRepositoryContainer.localSearchEntryDatasource)
     private let logger = resolve(\SharedToolingContainer.logger)
-    private let symmetricKey = resolve(\SharedDataContainer.symmetricKey)
-    private(set) var vaultSelection: VaultSelection
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let getSearchableItems = resolve(\UseCasesContainer.getSearchableItems)
+
+    private(set) var searchMode: SearchMode
     let itemContextMenuHandler = resolve(\SharedServiceContainer.itemContextMenuHandler)
 
-    // Self-intialized properties
     private var lastSearchQuery = ""
     private var lastTask: Task<Void, Never>?
     private var filteringTask: Task<Void, Never>?
-    private var allItems = [SymmetricallyEncryptedItem]()
     private var searchableItems = [SearchableItem]()
     private var history = [SearchEntryUiModel]()
     private var results = [ItemSearchResult]()
@@ -78,10 +80,16 @@ final class SearchViewModel: ObservableObject, DeinitPrintable {
 
     weak var delegate: SearchViewModelDelegate?
 
-    var searchBarPlaceholder: String { vaultSelection.searchBarPlacehoder }
+    var searchBarPlaceholder: String {
+        searchMode.searchBarPlacehoder
+    }
 
-    init(vaultSelection: VaultSelection) {
-        self.vaultSelection = vaultSelection
+    var isTrash: Bool {
+        searchMode.vaultSelection == .trash
+    }
+
+    init(searchMode: SearchMode) {
+        self.searchMode = searchMode
         setup()
     }
 }
@@ -95,19 +103,7 @@ private extension SearchViewModel {
                 state = .initializing
             }
 
-            let vaults = try await shareRepository.getVaults()
-
-            switch vaultSelection {
-            case .all:
-                allItems = try await itemRepository.getItems(state: .active)
-            case let .precise(vault):
-                allItems = try await itemRepository.getItems(shareId: vault.shareId, state: .active)
-            case .trash:
-                allItems = try await itemRepository.getItems(state: .trashed)
-            }
-            searchableItems = try allItems.map { try SearchableItem(from: $0,
-                                                                    symmetricKey: symmetricKey,
-                                                                    allVaults: vaults) }
+            searchableItems = try await getSearchableItems(for: searchMode)
             try await refreshSearchHistory()
         } catch {
             state = .error(error)
@@ -116,21 +112,22 @@ private extension SearchViewModel {
 
     @MainActor
     func refreshSearchHistory() async throws {
+        guard let vaultSelection = searchMode.vaultSelection else {
+            return
+        }
         var shareId: String?
         if case let .precise(vault) = vaultSelection {
             shareId = vault.shareId
         }
 
         let searchEntries = try await searchEntryDatasource.getAllEntries(shareId: shareId)
-        let symmetricKey = itemRepository.symmetricKey
-        history = try searchEntries.compactMap { entry in
-            if let item = allItems.first(where: {
+        history = searchEntries.compactMap { entry in
+            guard let item = searchableItems.first(where: {
                 $0.shareId == entry.shareID && $0.itemId == entry.itemID
-            }) {
-                return try item.toSearchEntryUiModel(symmetricKey)
-            } else {
+            }) else {
                 return nil
             }
+            return item.toSearchEntryUiModel
         }
 
         switch state {
@@ -147,31 +144,39 @@ private extension SearchViewModel {
 
     func doSearch(query: String) {
         lastSearchQuery = query
-        guard !query.isEmpty else {
-            if history.isEmpty {
-                state = .empty
-            } else {
-                state = .history(history)
+        switch searchMode {
+        case .pinned:
+            if query.isEmpty {
+                results = searchableItems.toItemSearchResults
+                filterAndSortResults()
+                return
             }
-            return
+        case .all:
+            guard !query.isEmpty else {
+                if history.isEmpty {
+                    state = .empty
+                } else {
+                    state = .history(history)
+                }
+                return
+            }
         }
-
         lastTask?.cancel()
         lastTask = Task { @MainActor [weak self] in
             guard let self else {
                 return
             }
             let hashedQuery = query.sha256
-            self.logger.trace("Searching for \"\(hashedQuery)\"")
+            logger.trace("Searching for \"\(hashedQuery)\"")
             if Task.isCancelled {
                 return
             }
-            self.results = self.searchableItems.result(for: query)
+            results = searchableItems.result(for: query)
             if Task.isCancelled {
                 return
             }
-            self.filterAndSortResults()
-            self.logger.trace("Get \(self.results.count) result(s) for \"\(hashedQuery)\"")
+            filterAndSortResults()
+            logger.trace("Get \(self.results.count) result(s) for \"\(hashedQuery)\"")
         }
     }
 
@@ -181,42 +186,39 @@ private extension SearchViewModel {
             return
         }
 
-        let filteredResults: [ItemSearchResult]
-        if let selectedType {
-            filteredResults = results.filter { $0.type == selectedType }
+        let filteredResults: [ItemSearchResult] = if let selectedType {
+            results.filter { $0.type == selectedType }
         } else {
-            filteredResults = results
+            results
         }
         filteringTask?.cancel()
-        filteringTask = Task { [weak self] in
+        filteringTask = Task { @MainActor [weak self] in
             guard let self else {
                 return
             }
             if Task.isCancelled {
                 return
             }
-            let filteredAndSortedResults = await self.sortItems(for: filteredResults)
+            let filteredAndSortedResults = await sortItems(for: filteredResults)
             if Task.isCancelled {
                 return
             }
-            await MainActor.run {
-                self.state = SearchViewState.results(ItemCount(items: self.results), filteredAndSortedResults)
-            }
+            state = SearchViewState.results(ItemCount(items: self.results), filteredAndSortedResults)
         }
     }
 
     func sortItems(for items: [ItemSearchResult]) async -> any SearchResults {
         switch selectedSortType {
         case .mostRecent:
-            return await items.asyncMostRecentSortResult()
+            await items.asyncMostRecentSortResult()
         case .alphabeticalAsc:
-            return await items.asyncAlphabeticalSortResult(direction: .ascending)
+            await items.asyncAlphabeticalSortResult(direction: .ascending)
         case .alphabeticalDesc:
-            return await items.asyncAlphabeticalSortResult(direction: .descending)
+            await items.asyncAlphabeticalSortResult(direction: .descending)
         case .newestToOldest:
-            return await items.asyncMonthYearSortResult(direction: .descending)
+            await items.asyncMonthYearSortResult(direction: .descending)
         case .oldestToNewest:
-            return await items.asyncMonthYearSortResult(direction: .ascending)
+            await items.asyncMonthYearSortResult(direction: .ascending)
         }
     }
 }
@@ -226,44 +228,48 @@ private extension SearchViewModel {
 extension SearchViewModel {
     func refreshResults() {
         Task { @MainActor [weak self] in
-            await self?.indexItems()
-            self?.doSearch(query: self?.lastSearchQuery ?? "")
+            guard let self else { return }
+            await indexItems()
+            doSearch(query: lastSearchQuery)
         }
     }
 
-    func viewDetail(of item: ItemIdentifiable) {
+    func viewDetail(of item: any ItemIdentifiable) {
         Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                if let itemContent = try await self?.itemRepository.getItemContent(shareId: item.shareId,
-                                                                                   itemId: item.itemId) {
-                    try await self?.searchEntryDatasource.upsert(item: item, date: .now)
-                    try await self?.refreshSearchHistory()
-                    self?.delegate?.searchViewModelWantsToViewDetail(of: itemContent)
+                if let itemContent = try await itemRepository.getItemContent(shareId: item.shareId,
+                                                                             itemId: item.itemId) {
+                    try await searchEntryDatasource.upsert(item: item, date: .now)
+                    try await refreshSearchHistory()
+                    delegate?.searchViewModelWantsToViewDetail(of: itemContent)
                 }
             } catch {
-                self?.delegate?.searchViewModelWantsDidEncounter(error: error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func removeFromHistory(_ item: ItemIdentifiable) {
+    func removeFromHistory(_ item: any ItemIdentifiable) {
         Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                try await self?.searchEntryDatasource.remove(item: item)
-                try await self?.refreshSearchHistory()
+                try await searchEntryDatasource.remove(item: item)
+                try await refreshSearchHistory()
             } catch {
-                self?.delegate?.searchViewModelWantsDidEncounter(error: error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
     func removeAllSearchHistory() {
         Task { @MainActor [weak self] in
+            guard let self else { return }
             do {
-                try await self?.searchEntryDatasource.removeAllEntries()
-                try await self?.refreshSearchHistory()
+                try await searchEntryDatasource.removeAllEntries()
+                try await refreshSearchHistory()
             } catch {
-                self?.delegate?.searchViewModelWantsDidEncounter(error: error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -274,7 +280,10 @@ extension SearchViewModel {
     }
 
     func searchInAllVaults() {
-        vaultSelection = .all
+        guard searchMode != .pinned else {
+            return
+        }
+        searchMode = .all(.all)
         refreshResults()
     }
 }
@@ -289,7 +298,8 @@ private extension SearchViewModel {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] term in
-                self?.doSearch(query: term)
+                guard let self else { return }
+                doSearch(query: term)
             }
             .store(in: &cancellables)
 
@@ -297,7 +307,8 @@ private extension SearchViewModel {
             .receive(on: DispatchQueue.main)
             .dropFirst()
             .sink { [weak self] _ in
-                self?.filterAndSortResults()
+                guard let self else { return }
+                filterAndSortResults()
             }
             .store(in: &cancellables)
     }
@@ -315,22 +326,22 @@ extension SearchViewState: Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
         case (.empty, .empty), (.initializing, .initializing):
-            return true
+            true
 
         case let (.history(lhsHistory), .history(rhsHistory)):
-            return lhsHistory == rhsHistory
+            lhsHistory == rhsHistory
 
         case let (.noResults(lhsQuery), .noResults(rhsQuery)):
-            return lhsQuery == rhsQuery
+            lhsQuery == rhsQuery
 
         case let (.results(lhsItemCount, lhsResults), .results(rhsItemCount, rhsResults)):
-            return lhsResults.hashValue == rhsResults.hashValue &&
+            lhsResults.hashValue == rhsResults.hashValue &&
                 lhsItemCount == rhsItemCount
 
         case let (.error(lhsError), .error(rhsError)):
-            return lhsError.localizedDescription == rhsError.localizedDescription
+            lhsError.localizedDescription == rhsError.localizedDescription
         default:
-            return false
+            false
         }
     }
 }

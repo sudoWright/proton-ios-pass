@@ -20,16 +20,16 @@
 
 import Foundation
 
-public enum ItemState: Int64, CaseIterable {
+public enum ItemState: Int64, CaseIterable, Sendable {
     case active = 1
     case trashed = 2
 
     public var description: String {
         switch self {
         case .active:
-            return "active"
+            "active"
         case .trashed:
-            return "trashed"
+            "trashed"
         }
     }
 }

@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 private let kChipHeight: CGFloat = 56
 
@@ -55,14 +56,15 @@ struct ItemCountView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
                 ForEach(0...5, id: \.self) { _ in
-                    AnimatingGradient()
+                    SkeletonBlock()
                         .frame(width: 100, height: kChipHeight)
                         .clipShape(Capsule())
                 }
             }
             .padding(.horizontal)
+            .shimmering()
         }
-        .adaptiveScrollDisabled(true)
+        .scrollDisabled(true)
     }
 }
 
@@ -79,7 +81,7 @@ private struct ItemContentTypeCountView: View {
 
             Spacer()
 
-            Text("\(count)")
+            Text(verbatim: "\(count)")
                 .fontWeight(.bold)
                 .foregroundColor(Color(uiColor: PassColor.textNorm))
 

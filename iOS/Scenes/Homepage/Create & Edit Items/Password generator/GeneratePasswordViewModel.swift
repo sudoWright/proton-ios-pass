@@ -19,42 +19,50 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import DesignSystem
+import Entities
+import Factory
 import SwiftUI
-import UIComponents
 
+@MainActor
 protocol GeneratePasswordViewModelDelegate: AnyObject {
     func generatePasswordViewModelDidConfirm(password: String)
 }
 
+@MainActor
 protocol GeneratePasswordViewModelUiDelegate: AnyObject {
-    func generatePasswordViewModelWantsToUpdateSheetHeight(passwordType: PasswordType,
-                                                           isShowingAdvancedOptions: Bool)
+    func generatePasswordViewModelWantsToUpdateSheetHeight(isShowingAdvancedOptions: Bool)
 }
 
 enum PasswordUtils {
-    static func generateColoredPasswords(_ password: String) -> [Text] {
-        var texts = [Text]()
-        password.forEach { char in
-            var color = Color(uiColor: PassColor.textNorm)
-            if AllowedCharacter.digit.rawValue.contains(char) {
-                color = Color(uiColor: PassColor.loginInteractionNormMajor2)
+    static func generateColoredPassword(_ password: String) -> AttributedString {
+        let attributedChars = password.map { char in
+            var attributedChar = AttributedString("\(char)")
+            attributedChar.foregroundColor = if AllowedCharacter.digit.rawValue.contains(char) {
+                PassColor.loginInteractionNormMajor2
             } else if AllowedCharacter.special.rawValue.contains(char) ||
                 AllowedCharacter.separator.rawValue.contains(char) {
-                color = Color(uiColor: PassColor.aliasInteractionNormMajor2)
+                PassColor.aliasInteractionNormMajor2
+            } else {
+                PassColor.textNorm
             }
-            texts.append(Text(String(char)).foregroundColor(color))
+            return attributedChar
         }
-        return texts
+        var attributedString = attributedChars.reduce(into: .init()) { $0 += $1 }
+        // Set an empty language id to trick SwiftUI into not adding hyphens for multiline passwords
+        attributedString.languageIdentifier = ""
+        return attributedString
     }
 }
 
+@MainActor
 final class GeneratePasswordViewModel: DeinitPrintable, ObservableObject {
     deinit { print(deinitMessage) }
 
     let mode: GeneratePasswordViewMode
-    let wordProvider: WordProviderProtocol
 
     @Published private(set) var password = ""
+    @Published private(set) var strength: PasswordStrength = .vulnerable
 
     @AppStorage("passwordType", store: kSharedUserDefaults)
     private(set) var type: PasswordType = .memorable {
@@ -68,7 +76,7 @@ final class GeneratePasswordViewModel: DeinitPrintable, ObservableObject {
 
     // Random password options
     @AppStorage("characterCount", store: kSharedUserDefaults)
-    var characterCount: Double = 16 { didSet { if characterCount != oldValue { regenerate() } } }
+    var characterCount: Double = 20 { didSet { if characterCount != oldValue { regenerate() } } }
 
     @AppStorage("hasSpecialCharacters", store: kSharedUserDefaults)
     var hasSpecialCharacters = true { didSet { regenerate() } }
@@ -100,13 +108,20 @@ final class GeneratePasswordViewModel: DeinitPrintable, ObservableObject {
     weak var delegate: GeneratePasswordViewModelDelegate?
     weak var uiDelegate: GeneratePasswordViewModelUiDelegate?
 
-    var texts: [Text] { PasswordUtils.generateColoredPasswords(password) }
+    var coloredPassword: AttributedString {
+        PasswordUtils.generateColoredPassword(password)
+    }
 
     private var cachedWords = [String]()
 
-    init(mode: GeneratePasswordViewMode, wordProvider: WordProviderProtocol) {
+    private let generatePassword = resolve(\SharedUseCasesContainer.generatePassword)
+    private let generateRandomWords = resolve(\SharedUseCasesContainer.generateRandomWords)
+    private let generatePassphrase = resolve(\SharedUseCasesContainer.generatePassphrase)
+    private let getPasswordStrength = resolve(\SharedUseCasesContainer.getPasswordStrength)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+
+    init(mode: GeneratePasswordViewMode) {
         self.mode = mode
-        self.wordProvider = wordProvider
         regenerate()
     }
 }
@@ -115,11 +130,28 @@ final class GeneratePasswordViewModel: DeinitPrintable, ObservableObject {
 
 extension GeneratePasswordViewModel {
     func regenerate(forceRefresh: Bool = true) {
-        switch type {
-        case .random:
-            regenerateRandomPassword()
-        case .memorable:
-            regenerateMemorablePassword(forceRefresh: forceRefresh)
+        do {
+            defer {
+                strength = getPasswordStrength(password: password) ?? .vulnerable
+            }
+
+            switch type {
+            case .random:
+                password = try generatePassword(length: Int(characterCount),
+                                                numbers: hasNumberCharacters,
+                                                uppercaseLetters: hasCapitalCharacters,
+                                                symbols: hasSpecialCharacters)
+            case .memorable:
+                if forceRefresh || cachedWords.isEmpty {
+                    cachedWords = try generateRandomWords(wordCount: Int(wordCount))
+                }
+                password = try generatePassphrase(words: cachedWords,
+                                                  separator: wordSeparator,
+                                                  capitalise: capitalizingWords,
+                                                  includeNumbers: includingNumbers)
+            }
+        } catch {
+            router.display(element: .displayErrorBanner(error))
         }
     }
 
@@ -139,44 +171,8 @@ extension GeneratePasswordViewModel {
 // MARK: - Private APIs
 
 private extension GeneratePasswordViewModel {
-    func regenerateRandomPassword() {
-        var allowedCharacters: [AllowedCharacter] = [.lowercase]
-        if hasSpecialCharacters { allowedCharacters.append(.special) }
-        if hasCapitalCharacters { allowedCharacters.append(.uppercase) }
-        if hasNumberCharacters { allowedCharacters.append(.digit) }
-        password = .random(allowedCharacters: allowedCharacters, length: Int(characterCount))
-    }
-
-    func regenerateMemorablePassword(forceRefresh: Bool) {
-        if forceRefresh || cachedWords.isEmpty {
-            cachedWords = PassphraseGenerator.generate(from: wordProvider, wordCount: Int(wordCount))
-        }
-
-        var words = cachedWords
-
-        if capitalizingWords { words = words.map(\.capitalized) }
-
-        if includingNumbers {
-            if let randomIndex = words.indices.randomElement(),
-               let randomNumber = AllowedCharacter.digit.rawValue.randomElement() {
-                words[randomIndex] += String(randomNumber)
-            }
-        }
-
-        var password = ""
-        for (index, word) in words.enumerated() {
-            password += word
-            if index != words.count - 1 {
-                password += wordSeparator.value
-            }
-        }
-
-        self.password = password
-    }
-
     func requestHeightUpdate() {
-        uiDelegate?.generatePasswordViewModelWantsToUpdateSheetHeight(passwordType: type,
-                                                                      isShowingAdvancedOptions:
-                                                                      isShowingAdvancedOptions)
+        uiDelegate?
+            .generatePasswordViewModelWantsToUpdateSheetHeight(isShowingAdvancedOptions: isShowingAdvancedOptions)
     }
 }

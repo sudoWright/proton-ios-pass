@@ -18,9 +18,10 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct NoteEditSection<Field: Hashable>: View {
     @Binding var note: String
@@ -28,17 +29,17 @@ struct NoteEditSection<Field: Hashable>: View {
     let field: Field
 
     var body: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.note)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Note")
                     .sectionTitleText()
 
                 TextEditorWithPlaceholder(text: $note,
                                           focusedField: focusedField,
                                           field: field,
-                                          placeholder: "Add note")
+                                          placeholder: #localized("Add note"))
                     .frame(maxWidth: .infinity, maxHeight: 350, alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -51,7 +52,7 @@ struct NoteEditSection<Field: Hashable>: View {
                 })
             }
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
         .animation(.default, value: note.isEmpty)
     }

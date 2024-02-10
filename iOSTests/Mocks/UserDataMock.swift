@@ -20,9 +20,9 @@
 
 import Client
 import Core
-import ProtonCore_DataModel
-import ProtonCore_Login
-import ProtonCore_Networking
+import ProtonCoreDataModel
+import ProtonCoreLogin
+import ProtonCoreNetworking
 
 extension UserData {
     static var mock: UserData {
@@ -32,9 +32,13 @@ extension UserData {
         let user = User(ID: .random(),
                         name: nil,
                         usedSpace: 0,
+                        usedBaseSpace: 0,
+                        usedDriveSpace: 0,
                         currency: .random(),
                         credit: 0,
                         maxSpace: 0,
+                        maxBaseSpace: 0,
+                        maxDriveSpace: 0,
                         maxUpload: 0,
                         role: 0,
                         private: 0,

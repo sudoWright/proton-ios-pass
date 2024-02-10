@@ -18,19 +18,30 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import Client
 import Core
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct ProfileTabView: View {
     @StateObject var viewModel: ProfileTabViewModel
+    @State private var presentSentinelSheet = false
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack {
+                    if viewModel.sentinelEnabled, viewModel.isSentinelEligible {
+                        Button { presentSentinelSheet = true } label: {
+                            sentinelCell
+                                .padding(.horizontal)
+                                .padding(.bottom)
+                                .showSpinner(viewModel.updatingSentinel)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     itemCountSection
 
                     securitySection
@@ -63,12 +74,28 @@ struct ProfileTabView: View {
                 .padding(.top)
                 .animation(.default, value: viewModel.automaticallyCopyTotpCode)
                 .animation(.default, value: viewModel.localAuthenticationMethod)
+                .animation(.default, value: viewModel.isSentinelEligible)
+                .showSpinner(viewModel.loading)
             }
+
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
-            .background(Color(uiColor: PassColor.backgroundNorm))
+            .background(PassColor.backgroundNorm.toColor)
             .toolbar { toolbarContent }
+        }
+        .task {
+            await viewModel.refreshPlan()
+            await viewModel.checkSentinel()
+        }
+        .sheet(isPresented: $presentSentinelSheet) {
+            SentinelSheetView(isPresented: $presentSentinelSheet,
+                              sentinelActive: viewModel.isSentinelActive,
+                              mainAction: { viewModel.toggleSentinelState()
+                                  presentSentinelSheet = false
+                              },
+                              secondaryAction: { viewModel.showSentinelInformation() })
+                .presentationDetents([.height(500)])
         }
         .navigationViewStyle(.stack)
     }
@@ -76,12 +103,12 @@ struct ProfileTabView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigationBarTrailing) {
-            if let plan = viewModel.plan, plan.planType != .plus {
+            if viewModel.plan?.hideUpgrade == false {
                 CapsuleLabelButton(icon: PassIcon.brandPass,
-                                   title: "Upgrade",
+                                   title: #localized("Upgrade"),
                                    titleColor: PassColor.interactionNorm,
                                    backgroundColor: PassColor.interactionNormMinor2,
-                                   action: viewModel.upgrade)
+                                   action: { viewModel.upgrade() })
             } else {
                 EmptyView()
             }
@@ -101,13 +128,13 @@ struct ProfileTabView: View {
         VStack(spacing: 0) {
             Text("Security")
                 .profileSectionTitle()
-                .padding(.bottom, kItemDetailSectionPadding)
+                .padding(.bottom, DesignConstant.sectionPadding)
 
             VStack(spacing: 0) {
-                OptionRow(action: viewModel.editLocalAuthenticationMethod,
+                OptionRow(action: { viewModel.editLocalAuthenticationMethod() },
                           height: .tall,
                           content: {
-                              VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 2) {
+                              VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 2) {
                                   Text("Unlock with")
                                       .sectionTitleText()
 
@@ -120,10 +147,10 @@ struct ProfileTabView: View {
                 if viewModel.localAuthenticationMethod != .none {
                     PassDivider()
 
-                    OptionRow(action: viewModel.editAppLockTime,
+                    OptionRow(action: { viewModel.editAppLockTime() },
                               height: .tall,
                               content: {
-                                  VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 2) {
+                                  VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 2) {
                                       Text("Automatic lock")
                                           .sectionTitleText()
 
@@ -138,31 +165,33 @@ struct ProfileTabView: View {
                 case .none:
                     EmptyView()
 
-                case .biometric:
+                case let .biometric(type):
                     PassDivider()
 
                     OptionRow(height: .tall) {
                         Toggle(isOn: $viewModel.fallbackToPasscode) {
-                            Text("Use system passcode when \(viewModel.localAuthenticationMethod.title) fails")
-                                .foregroundColor(Color(uiColor: PassColor.textNorm))
+                            Text(type.fallbackToPasscodeMessage)
+                                .foregroundColor(PassColor.textNorm.toColor)
                         }
-                        .tint(Color(uiColor: PassColor.interactionNorm))
+                        .tint(PassColor.interactionNorm.toColor)
                     }
 
                 case .pin:
                     PassDivider()
 
-                    OptionRow(action: viewModel.editPINCode, height: .medium) {
-                        HStack {
-                            Text("Change PIN code")
-                            Spacer()
-                            CircleButton(icon: IconProvider.grid3,
-                                         iconColor: PassColor.interactionNormMajor2,
-                                         backgroundColor: PassColor.interactionNormMinor1,
-                                         action: nil)
-                        }
-                        .foregroundColor(PassColor.interactionNormMajor2.toColor)
-                    }
+                    OptionRow(action: { viewModel.editPINCode() },
+                              height: .medium,
+                              content: {
+                                  HStack {
+                                      Text("Change PIN code")
+                                      Spacer()
+                                      CircleButton(icon: IconProvider.grid3,
+                                                   iconColor: PassColor.interactionNormMajor2,
+                                                   backgroundColor: PassColor.interactionNormMinor1,
+                                                   action: nil)
+                                  }
+                                  .foregroundColor(PassColor.interactionNormMajor2.toColor)
+                              })
                 }
             }
             .roundedEditableSection()
@@ -175,23 +204,24 @@ struct ProfileTabView: View {
             OptionRow(height: .medium) {
                 HStack {
                     Text("AutoFill disabled")
-                        .foregroundColor(Color(uiColor: PassColor.textNorm))
+                        .foregroundColor(PassColor.textNorm.toColor)
 
                     Spacer()
 
-                    Button(action: UIApplication.shared.openPasswordSettings) {
-                        Label("Open Settings", systemImage: "arrow.up.right.square")
+                    Button { viewModel.handleEnableAutoFillAction() } label: {
+                        Label(ProcessInfo.processInfo.isiOSAppOnMac ? "Show me how" : "Open Settings",
+                              systemImage: "arrow.up.right.square")
                             .font(.callout.weight(.semibold))
-                            .foregroundColor(Color(uiColor: PassColor.interactionNormMajor2))
+                            .foregroundColor(PassColor.interactionNormMajor2.toColor)
                     }
                 }
             }
             .roundedEditableSection()
 
-            Text("AutoFill on apps and websites by enabling Proton Pass AutoFill.")
+            Text("AutoFill on apps and websites by enabling Proton Pass AutoFill")
                 .sectionTitleText()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, kItemDetailSectionPadding / 2)
+                .padding(.top, DesignConstant.sectionPadding / 2)
         }
         .padding(.horizontal)
     }
@@ -202,9 +232,9 @@ struct ProfileTabView: View {
                 OptionRow(height: .medium) {
                     Toggle(isOn: $viewModel.quickTypeBar) {
                         Text("QuickType bar suggestions")
-                            .foregroundColor(Color(uiColor: PassColor.textNorm))
+                            .foregroundColor(PassColor.textNorm.toColor)
                     }
-                    .tint(Color(uiColor: PassColor.interactionNorm))
+                    .tint(PassColor.interactionNorm.toColor)
                 }
 
                 PassSectionDivider()
@@ -212,9 +242,9 @@ struct ProfileTabView: View {
                 OptionRow(height: .medium) {
                     Toggle(isOn: $viewModel.automaticallyCopyTotpCode) {
                         Text("Copy 2FA code")
-                            .foregroundColor(Color(uiColor: PassColor.textNorm))
+                            .foregroundColor(PassColor.textNorm.toColor)
                     }
-                    .tint(Color(uiColor: PassColor.interactionNorm))
+                    .tint(PassColor.interactionNorm.toColor)
                 }
             }
             .roundedEditableSection()
@@ -224,11 +254,11 @@ struct ProfileTabView: View {
 
     private var accountAndSettingsSection: some View {
         VStack(spacing: 0) {
-            OptionRow(action: viewModel.showAccountMenu,
+            OptionRow(action: { viewModel.showAccountMenu() },
                       content: {
                           HStack {
                               Text("Account")
-                                  .foregroundColor(Color(uiColor: PassColor.textNorm))
+                                  .foregroundColor(PassColor.textNorm.toColor)
 
                               Spacer()
 
@@ -242,7 +272,7 @@ struct ProfileTabView: View {
                                           .scaledToFit()
                                           .frame(maxWidth: associatedPlanInfo.iconWidth)
                                   })
-                                  .foregroundColor(Color(uiColor: associatedPlanInfo.tintColor))
+                                  .foregroundColor(associatedPlanInfo.tintColor.toColor)
                                   .padding(.horizontal)
                               }
                           }
@@ -251,7 +281,7 @@ struct ProfileTabView: View {
 
             PassSectionDivider()
 
-            TextOptionRow(title: "Settings", action: viewModel.showSettingsMenu)
+            TextOptionRow(title: #localized("Settings"), action: { viewModel.showSettingsMenu() })
         }
         .roundedEditableSection()
         .padding(.horizontal)
@@ -259,13 +289,9 @@ struct ProfileTabView: View {
 
     private var aboutSection: some View {
         VStack(spacing: 0) {
-            /*
-             TextOptionRow(title: "Acknowledgments", action: viewModel.showAcknowledgments)
-             PassSectionDivider()
-             */
-            TextOptionRow(title: "Privacy policy", action: viewModel.showPrivacyPolicy)
+            TextOptionRow(title: #localized("Privacy policy"), action: { viewModel.showPrivacyPolicy() })
             PassSectionDivider()
-            TextOptionRow(title: "Terms of service", action: viewModel.showTermsOfService)
+            TextOptionRow(title: #localized("Terms of service"), action: { viewModel.showTermsOfService() })
         }
         .roundedEditableSection()
         .padding(.horizontal)
@@ -275,12 +301,33 @@ struct ProfileTabView: View {
         VStack(spacing: 0) {
             Text("Help center")
                 .profileSectionTitle()
-                .padding(.bottom, kItemDetailSectionPadding)
+                .padding(.bottom, DesignConstant.sectionPadding)
 
             VStack(spacing: 0) {
-                TextOptionRow(title: "How to import to Proton Pass", action: viewModel.showImportInstructions)
+                if Bundle.main.isQaBuild {
+                    TextOptionRow(title: "Import to/export from Proton Pass",
+                                  action: { viewModel.showImportExportFlow() })
+                } else {
+                    TextOptionRow(title: #localized("How to import to Proton Pass"),
+                                  action: { viewModel.showImportInstructions() })
+                }
+
                 PassSectionDivider()
-                TextOptionRow(title: "Feedback", action: viewModel.showFeedback)
+                TextOptionRow(title: #localized("Feedback"), action: { viewModel.showFeedback() })
+
+                PassSectionDivider()
+                OptionRow(action: { viewModel.showTutorial() },
+                          content: {
+                              Text("How to use Proton Pass")
+                                  .foregroundColor(PassColor.textNorm.toColor)
+                          },
+                          trailing: {
+                              Image(uiImage: IconProvider.arrowOutSquare)
+                                  .resizable()
+                                  .scaledToFit()
+                                  .frame(height: 16)
+                                  .foregroundColor(PassColor.textHint.toColor)
+                          })
             }
             .roundedEditableSection()
         }
@@ -289,16 +336,69 @@ struct ProfileTabView: View {
 
     private var qaFeaturesSection: some View {
         VStack(spacing: 0) {
-            TextOptionRow(title: "QA Features", action: viewModel.qaFeatures)
+            TextOptionRow(title: "QA Features", action: { viewModel.qaFeatures() })
         }
         .roundedEditableSection()
         .padding(.horizontal)
     }
 }
 
+// MARK: - Sentinel
+
+private extension ProfileTabView {
+    var sentinelCell: some View {
+        HStack(spacing: DesignConstant.sectionPadding) {
+            ZStack(alignment: .bottomTrailing) {
+                Image(uiImage: PassIcon.sentinelLogo)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 40)
+
+                Image(systemName: viewModel.isSentinelActive ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .resizable()
+                    .frame(width: 12, height: 12)
+                    .foregroundColor(viewModel.isSentinelActive ? PassColor.interactionNormMajor2.toColor :
+                        PassColor.noteInteractionNormMajor2.toColor)
+                    .background(viewModel.isSentinelActive ? .white : .black)
+                    .clipShape(.circle)
+            }
+
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text(verbatim: "Proton Sentinel ")
+                    .font(.body)
+                    .foregroundColor(PassColor.textNorm.toColor)
+                    + Text(verbatim: viewModel.isSentinelActive ? #localized("Active") : #localized("Inactive"))
+                    .font(.body)
+                    .foregroundColor(viewModel.isSentinelActive ? PassColor.interactionNormMajor2
+                        .toColor : PassColor.noteInteractionNormMajor2.toColor)
+                Text("Increase your security")
+                    .font(.footnote)
+                    .foregroundColor(PassColor.textWeak.toColor)
+            }
+            .frame(maxWidth: .infinity, minHeight: 75, alignment: .leading)
+            .contentShape(Rectangle())
+            ItemDetailSectionIcon(icon: IconProvider.chevronRight,
+                                  color: PassColor.textWeak,
+                                  width: 15)
+        }
+        .padding(.horizontal, DesignConstant.sectionPadding)
+        .background(PassColor.inputBackgroundNorm.toColor)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .stroke(LinearGradient(gradient:
+                Gradient(colors: [
+                    PassColor.interactionNormMajor2.toColor,
+                    PassColor.noteInteractionNormMajor2.toColor
+                ]),
+                startPoint: .leading,
+                endPoint: .trailing),
+            lineWidth: 1))
+    }
+}
+
 private extension View {
     func profileSectionTitle() -> some View {
-        foregroundColor(Color(uiColor: PassColor.textNorm))
+        foregroundColor(PassColor.textNorm.toColor)
             .font(.callout.weight(.bold))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -311,22 +411,89 @@ private struct AssociatedPlanInfo {
     let tintColor: UIColor
 }
 
-private extension PassPlan {
+private extension Plan {
     var associatedPlanInfo: AssociatedPlanInfo? {
         switch planType {
         case .free:
-            return nil
+            nil
 
         case .trial:
-            return .init(title: "Free trial",
-                         icon: PassIcon.badgeTrial,
-                         iconWidth: 12,
-                         tintColor: PassColor.interactionNormMajor2)
-        case .plus:
-            return .init(title: displayName,
-                         icon: PassIcon.badgePaid,
-                         iconWidth: 16,
-                         tintColor: PassColor.noteInteractionNormMajor2)
+            .init(title: #localized("Free trial"),
+                  icon: PassIcon.badgeTrial,
+                  iconWidth: 12,
+                  tintColor: PassColor.interactionNormMajor2)
+
+        case .business, .plus:
+            .init(title: displayName,
+                  icon: PassIcon.badgePaid,
+                  iconWidth: 16,
+                  tintColor: PassColor.noteInteractionNormMajor2)
+        }
+    }
+}
+
+struct SentinelSheetView: View {
+    @Binding var isPresented: Bool
+    let sentinelActive: Bool
+    let mainAction: () -> Void
+    let secondaryAction: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            PassColor.backgroundNorm.toColor
+                .ignoresSafeArea()
+
+            ViewThatFits {
+                mainSentinelSheet.padding(20)
+                ScrollView(showsIndicators: false) {
+                    mainSentinelSheet
+                }.padding(20)
+            }
+
+            Button { isPresented = false } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .resizable()
+                    .frame(width: 30, height: 30)
+                    .foregroundColor(PassColor.interactionNormMinor1.toColor)
+                    .background(PassColor.interactionNormMajor2.toColor)
+                    .clipShape(.circle)
+            }
+            .buttonStyle(.plain)
+            .padding(15)
+        }
+    }
+
+    private var mainSentinelSheet: some View {
+        VStack(spacing: 16) {
+            Image(uiImage: PassIcon.netShield)
+                .resizable()
+                .scaledToFit()
+
+            Text("Proton Sentinel")
+                .font(.title)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+
+            Text("Sentinel description")
+                .font(.body)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity, alignment: .top)
+
+            CapsuleTextButton(title: sentinelActive ? #localized("Disable Proton Sentinel") :
+                #localized("Enable Proton Sentinel"),
+                titleColor: PassColor.interactionNormMinor2,
+                backgroundColor: PassColor.interactionNormMajor1,
+                action: {
+                    mainAction()
+                })
+                .padding(.horizontal, DesignConstant.sectionPadding)
+
+            CapsuleTextButton(title: #localized("Learn more"),
+                              titleColor: PassColor.interactionNormMajor2,
+                              backgroundColor: PassColor.interactionNormMinor1,
+                              action: { secondaryAction() })
+                .padding(.horizontal, DesignConstant.sectionPadding)
         }
     }
 }

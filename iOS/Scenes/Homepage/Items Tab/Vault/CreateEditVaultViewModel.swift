@@ -19,9 +19,12 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import Combine
 import Core
+import Entities
 import Factory
-import ProtonCore_Login
+import Macro
+import ProtonCoreLogin
 
 enum VaultColorIcon {
     case color(VaultColor)
@@ -36,37 +39,49 @@ enum VaultColorIcon {
 
 enum VaultMode {
     case create
-    case edit(Vault)
+    case editExistingVault(Vault)
+    case editNewVault(VaultProtobuf, ItemContent)
+
+    var isCreation: Bool {
+        if case .create = self {
+            return true
+        }
+        return false
+    }
 }
 
+@MainActor
 protocol CreateEditVaultViewModelDelegate: AnyObject {
-    func createEditVaultViewModelWantsToShowSpinner()
-    func createEditVaultViewModelWantsToHideSpinner()
-    func createEditVaultViewModelWantsToUpgrade()
-    func createEditVaultViewModelDidCreateVault()
     func createEditVaultViewModelDidEditVault()
-    func createEditVaultViewModelDidEncounter(error: Error)
 }
 
+@MainActor
 final class CreateEditVaultViewModel: ObservableObject {
     @Published private(set) var canCreateOrEdit = true
     @Published var selectedColor: VaultColor
     @Published var selectedIcon: VaultIcon
     @Published var title: String
+    @Published private(set) var loading = false
+    @Published private(set) var finishSaving = false
 
     private let mode: VaultMode
     private let logger = resolve(\SharedToolingContainer.logger)
     private let shareRepository = resolve(\SharedRepositoryContainer.shareRepository)
     private let upgradeChecker = resolve(\SharedServiceContainer.upgradeChecker)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let createVaultUseCase = resolve(\UseCasesContainer.createVault)
+    private let setShareInviteVault = resolve(\UseCasesContainer.setShareInviteVault)
 
     weak var delegate: CreateEditVaultViewModelDelegate?
 
     var saveButtonTitle: String {
         switch mode {
         case .create:
-            return "Create vault"
-        case .edit:
-            return "Save"
+            #localized("Create vault")
+        case .editExistingVault:
+            #localized("Save")
+        case .editNewVault:
+            #localized("Update vault")
         }
     }
 
@@ -77,9 +92,13 @@ final class CreateEditVaultViewModel: ObservableObject {
             selectedColor = .color1
             selectedIcon = .icon1
             title = ""
-        case let .edit(vault):
+        case let .editExistingVault(vault):
             selectedColor = vault.displayPreferences.color.color
             selectedIcon = vault.displayPreferences.icon.icon
+            title = vault.name
+        case let .editNewVault(vault, _):
+            selectedColor = vault.display.color.color
+            selectedIcon = vault.display.icon.icon
             title = vault.name
         }
         verifyLimitation()
@@ -91,17 +110,12 @@ final class CreateEditVaultViewModel: ObservableObject {
 private extension CreateEditVaultViewModel {
     func verifyLimitation() {
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, mode.isCreation else { return }
             do {
-                // Primary vault can always be edited
-                if case let .edit(vault) = self.mode, vault.isPrimary {
-                    self.canCreateOrEdit = true
-                } else {
-                    self.canCreateOrEdit = try await self.upgradeChecker.canCreateMoreVaults()
-                }
+                canCreateOrEdit = try await upgradeChecker.canCreateMoreVaults()
             } catch {
-                self.logger.error(error)
-                self.delegate?.createEditVaultViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -116,17 +130,17 @@ private extension CreateEditVaultViewModel {
     func editVault(_ oldVault: Vault) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.createEditVaultViewModelWantsToHideSpinner() }
+            defer { self.loading = false }
             do {
                 self.logger.trace("Editing vault \(oldVault.id)")
-                self.delegate?.createEditVaultViewModelWantsToShowSpinner()
+                self.loading = true
                 try await self.shareRepository.edit(oldVault: oldVault,
                                                     newVault: self.generateVaultProtobuf())
                 self.delegate?.createEditVaultViewModelDidEditVault()
                 self.logger.info("Edited vault \(oldVault.id)")
             } catch {
                 self.logger.error(error)
-                self.delegate?.createEditVaultViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -134,16 +148,17 @@ private extension CreateEditVaultViewModel {
     func createVault() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.createEditVaultViewModelWantsToHideSpinner() }
+            defer { self.loading = false }
             do {
                 self.logger.trace("Creating vault")
-                self.delegate?.createEditVaultViewModelWantsToShowSpinner()
-                try await self.shareRepository.createVault(self.generateVaultProtobuf())
-                self.delegate?.createEditVaultViewModelDidCreateVault()
+                self.loading = true
+                try await self.createVaultUseCase(with: self.generateVaultProtobuf())
+                self.router.display(element: .successMessage(#localized("Vault created"),
+                                                             config: .dismissAndRefresh))
                 self.logger.info("Created vault")
             } catch {
                 self.logger.error(error)
-                self.delegate?.createEditVaultViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -154,15 +169,18 @@ private extension CreateEditVaultViewModel {
 extension CreateEditVaultViewModel {
     func save() {
         switch mode {
-        case let .edit(vault):
-            editVault(vault)
         case .create:
             createVault()
+        case let .editExistingVault(vault):
+            editVault(vault)
+        case let .editNewVault(_, itemContent):
+            setShareInviteVault(with: .new(generateVaultProtobuf(), itemContent))
+            finishSaving = true
         }
     }
 
     func upgrade() {
-        delegate?.createEditVaultViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
     }
 }
 
@@ -180,16 +198,16 @@ extension VaultColorIcon: Hashable {
 extension VaultColor {
     var protobufColor: ProtonPassVaultV1_VaultColor {
         switch self {
-        case .color1: return .color1
-        case .color2: return .color2
-        case .color3: return .color3
-        case .color4: return .color4
-        case .color5: return .color5
-        case .color6: return .color6
-        case .color7: return .color7
-        case .color8: return .color8
-        case .color9: return .color9
-        case .color10: return .color10
+        case .color1: .color1
+        case .color2: .color2
+        case .color3: .color3
+        case .color4: .color4
+        case .color5: .color5
+        case .color6: .color6
+        case .color7: .color7
+        case .color8: .color8
+        case .color9: .color9
+        case .color10: .color10
         }
     }
 }
@@ -197,36 +215,36 @@ extension VaultColor {
 extension VaultIcon {
     var protobufIcon: ProtonPassVaultV1_VaultIcon {
         switch self {
-        case .icon1: return .icon1
-        case .icon2: return .icon2
-        case .icon3: return .icon3
-        case .icon4: return .icon4
-        case .icon5: return .icon5
-        case .icon6: return .icon6
-        case .icon7: return .icon7
-        case .icon8: return .icon8
-        case .icon9: return .icon9
-        case .icon10: return .icon10
-        case .icon11: return .icon11
-        case .icon12: return .icon12
-        case .icon13: return .icon13
-        case .icon14: return .icon14
-        case .icon15: return .icon15
-        case .icon16: return .icon16
-        case .icon17: return .icon17
-        case .icon18: return .icon18
-        case .icon19: return .icon19
-        case .icon20: return .icon20
-        case .icon21: return .icon21
-        case .icon22: return .icon22
-        case .icon23: return .icon23
-        case .icon24: return .icon24
-        case .icon25: return .icon25
-        case .icon26: return .icon26
-        case .icon27: return .icon27
-        case .icon28: return .icon28
-        case .icon29: return .icon29
-        case .icon30: return .icon30
+        case .icon1: .icon1
+        case .icon2: .icon2
+        case .icon3: .icon3
+        case .icon4: .icon4
+        case .icon5: .icon5
+        case .icon6: .icon6
+        case .icon7: .icon7
+        case .icon8: .icon8
+        case .icon9: .icon9
+        case .icon10: .icon10
+        case .icon11: .icon11
+        case .icon12: .icon12
+        case .icon13: .icon13
+        case .icon14: .icon14
+        case .icon15: .icon15
+        case .icon16: .icon16
+        case .icon17: .icon17
+        case .icon18: .icon18
+        case .icon19: .icon19
+        case .icon20: .icon20
+        case .icon21: .icon21
+        case .icon22: .icon22
+        case .icon23: .icon23
+        case .icon24: .icon24
+        case .icon25: .icon25
+        case .icon26: .icon26
+        case .icon27: .icon27
+        case .icon28: .icon28
+        case .icon29: .icon29
+        case .icon30: .icon30
         }
     }
 }

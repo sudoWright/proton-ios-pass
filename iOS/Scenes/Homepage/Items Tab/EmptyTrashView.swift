@@ -18,9 +18,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct EmptyTrashView: View {
     var body: some View {
@@ -38,7 +38,7 @@ struct EmptyTrashView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                     .padding(.vertical)
-                Text("Deleted items will be moved here first")
+                Text("Items moved to trash appear here")
                     .foregroundColor(Color(uiColor: PassColor.textWeak))
                     .multilineTextAlignment(.center)
                 Spacer()

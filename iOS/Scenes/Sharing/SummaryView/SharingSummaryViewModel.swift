@@ -27,11 +27,10 @@ import Foundation
 
 @MainActor
 final class SharingSummaryViewModel: ObservableObject, Sendable {
-    @Published private(set) var infos: SharingInfos?
+    @Published private(set) var infos = [SharingInfos]()
     @Published private(set) var sendingInvite = false
-    @Published var error: Error?
-    private let router = resolve(\RouterContainer.mainUIKitSwiftUIRouter)
 
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
     private var lastTask: Task<Void, Never>?
     private let getShareInviteInfos = resolve(\UseCasesContainer.getCurrentShareInviteInformations)
     private let sendShareInvite = resolve(\UseCasesContainer.sendVaultShareInvite)
@@ -40,10 +39,14 @@ final class SharingSummaryViewModel: ObservableObject, Sendable {
         setUp()
     }
 
+    var hasSingleInvite: Bool {
+        infos.count == 1
+    }
+
     func sendInvite() {
         lastTask?.cancel()
         lastTask = Task { [weak self] in
-            guard let self, let infos else {
+            guard let self else {
                 return
             }
             defer {
@@ -51,17 +54,28 @@ final class SharingSummaryViewModel: ObservableObject, Sendable {
                 self.lastTask?.cancel()
                 self.lastTask = nil
             }
-            self.sendingInvite = true
+            sendingInvite = true
+
             do {
                 if Task.isCancelled {
                     return
                 }
-                _ = try await self.sendShareInvite(with: infos)
-                if let vault = self.infos?.vault {
-                    self.router.presentSheet(for: .manageShareVault(vault, dismissBeforeShowing: true))
+                let sharedVault = try await sendShareInvite(with: infos)
+                if let baseInfo = infos.first {
+                    switch baseInfo.vault {
+                    case .existing:
+                        // When sharing a created vault, we want to keep the context
+                        // by only dismissing the top most sheet (which is share vault sheet)
+                        router.present(for: .manageShareVault(sharedVault, .topMost))
+                    case .new:
+                        // When sharing a new vault from item detail page,
+                        // as the item is moved to the new vault, the last item detail sheet is stale
+                        // so we dismiss all sheets
+                        router.present(for: .manageShareVault(sharedVault, .all))
+                    }
                 }
             } catch {
-                self.error = error
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -70,6 +84,5 @@ final class SharingSummaryViewModel: ObservableObject, Sendable {
 private extension SharingSummaryViewModel {
     func setUp() {
         infos = getShareInviteInfos()
-        assert(infos?.vault != nil, "Vault is not set")
     }
 }

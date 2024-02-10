@@ -21,33 +21,34 @@
 import Client
 import Combine
 import Core
+import DesignSystem
 import Factory
 import LocalAuthentication
 import SwiftUI
-import UIComponents
 
+@MainActor
 final class OnboardingViewModel: ObservableObject {
     @Published private(set) var finished = false
     @Published private(set) var state = OnboardingViewState.autoFill
 
     private let credentialManager = resolve(\SharedServiceContainer.credentialManager)
-    private let bannerManager: BannerManager
+    private let bannerManager = resolve(\SharedViewContainer.bannerManager)
     private let policy = resolve(\SharedToolingContainer.localAuthenticationEnablingPolicy)
     private let preferences = resolve(\SharedToolingContainer.preferences)
     private let checkBiometryType = resolve(\SharedUseCasesContainer.checkBiometryType)
     private let authenticate = resolve(\SharedUseCasesContainer.authenticateBiometrically)
+    private let openAutoFillSettings = resolve(\UseCasesContainer.openAutoFillSettings)
 
     private var cancellables = Set<AnyCancellable>()
 
-    init(bannerManager: BannerManager) {
-        self.bannerManager = bannerManager
-
+    init() {
         checkAutoFillStatus()
 
         NotificationCenter.default
             .publisher(for: UIApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                self?.checkAutoFillStatus()
+                guard let self else { return }
+                checkAutoFillStatus()
             }
             .store(in: &cancellables)
 
@@ -55,17 +56,17 @@ final class OnboardingViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                if self.preferences.localAuthenticationMethod == .biometric {
+                if preferences.localAuthenticationMethod == .biometric {
                     do {
-                        let biometryType = try self.checkBiometryType(policy: self.policy)
+                        let biometryType = try checkBiometryType(policy: policy)
                         switch biometryType {
                         case .touchID:
-                            self.state = .touchIDEnabled
+                            state = .touchIDEnabled
                         default:
-                            self.state = .faceIDEnabled
+                            state = .faceIDEnabled
                         }
                     } catch {
-                        self.state = .faceIDEnabled
+                        state = .faceIDEnabled
                     }
                 }
             }
@@ -79,7 +80,7 @@ extension OnboardingViewModel {
     func primaryAction() {
         switch state {
         case .autoFill:
-            UIApplication.shared.openPasswordSettings()
+            openAutoFillSettings()
 
         case .autoFillEnabled:
             showAppropriateBiometricAuthenticationStep()

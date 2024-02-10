@@ -21,43 +21,42 @@
 import Client
 import Combine
 import Core
+import Entities
 import Factory
-import ProtonCore_Services
+import ProtonCoreServices
 import SwiftUI
 
+@MainActor
 protocol ProfileTabViewModelDelegate: AnyObject {
-    func profileTabViewModelWantsToShowSpinner()
-    func profileTabViewModelWantsToHideSpinner()
-    func profileTabViewModelWantsToUpgrade()
     func profileTabViewModelWantsToShowAccountMenu()
     func profileTabViewModelWantsToShowSettingsMenu()
-    func profileTabViewModelWantsToShowAcknowledgments()
-    func profileTabViewModelWantsToShowPrivacyPolicy()
-    func profileTabViewModelWantsToShowTermsOfService()
-    func profileTabViewModelWantsToShowImportInstructions()
     func profileTabViewModelWantsToShowFeedback()
     func profileTabViewModelWantsToQaFeatures()
-    func profileTabViewModelDidEncounter(error: Error)
 }
 
+@MainActor
 final class ProfileTabViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private let credentialManager = resolve(\SharedServiceContainer.credentialManager)
     private let logger = resolve(\SharedToolingContainer.logger)
     private let preferences = resolve(\SharedToolingContainer.preferences)
-    private let featureFlagsRepository = resolve(\SharedRepositoryContainer.featureFlagsRepository)
-    private let passPlanRepository = resolve(\SharedRepositoryContainer.passPlanRepository)
+    private let accessRepository = resolve(\SharedRepositoryContainer.accessRepository)
+    private let userSettingsRepository = resolve(\SharedRepositoryContainer.userSettingsRepository)
     private let notificationService = resolve(\SharedServiceContainer.notificationService)
     private let securitySettingsCoordinator: SecuritySettingsCoordinator
+    private let userDataProvider = resolve(\SharedDataContainer.userDataProvider)
 
     private let policy = resolve(\SharedToolingContainer.localAuthenticationEnablingPolicy)
     private let checkBiometryType = resolve(\SharedUseCasesContainer.checkBiometryType)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
 
     // Use cases
-    private let refreshFeatureFlags = resolve(\UseCasesContainer.refreshFeatureFlags)
     private let indexAllLoginItems = resolve(\SharedUseCasesContainer.indexAllLoginItems)
     private let unindexAllLoginItems = resolve(\SharedUseCasesContainer.unindexAllLoginItems)
+    private let openAutoFillSettings = resolve(\UseCasesContainer.openAutoFillSettings)
+    private let toggleSentinel = resolve(\SharedUseCasesContainer.toggleSentinel)
+    private let getFeatureFlagStatus = resolve(\SharedUseCasesContainer.getFeatureFlagStatus)
 
     @Published private(set) var localAuthenticationMethod: LocalAuthenticationMethodUiModel = .none
     @Published private(set) var appLockTime: AppLockTime = .twoMinutes
@@ -79,10 +78,18 @@ final class ProfileTabViewModel: ObservableObject, DeinitPrintable {
         }
     }
 
-    @Published private(set) var plan: PassPlan?
+    @Published private(set) var loading = false
+    @Published private(set) var plan: Plan?
+    @Published private(set) var isSentinelEligible = false
+    @Published private(set) var isSentinelActive = false
+    @Published private(set) var updatingSentinel = false
 
     private var cancellables = Set<AnyCancellable>()
     weak var delegate: ProfileTabViewModelDelegate?
+
+    var sentinelEnabled: Bool {
+        getFeatureFlagStatus(with: FeatureFlagType.passSentinelV1)
+    }
 
     init(childCoordinatorDelegate: ChildCoordinatorDelegate) {
         let securitySettingsCoordinator = SecuritySettingsCoordinator()
@@ -95,20 +102,7 @@ final class ProfileTabViewModel: ObservableObject, DeinitPrintable {
 
         refresh()
 
-        NotificationCenter.default
-            .publisher(for: UIApplication.willEnterForegroundNotification)
-            .sink { [weak self] _ in
-                self?.refresh()
-            }
-            .store(in: &cancellables)
-
-        preferences.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateAutoFillAvalability()
-                self?.updateSecuritySettings()
-            }
-            .store(in: &cancellables)
+        setUp()
     }
 }
 
@@ -116,34 +110,84 @@ final class ProfileTabViewModel: ObservableObject, DeinitPrintable {
 
 extension ProfileTabViewModel {
     func upgrade() {
-        delegate?.profileTabViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
     }
 
-    func refreshPlan() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+    @MainActor
+    func refreshPlan() async {
+        do {
+            // First get local plan to optimistically display it
+            // and then try to refresh the plan to have it updated
+            plan = try await accessRepository.getPlan()
+            plan = try await accessRepository.refreshAccess().plan
+        } catch {
+            logger.error(error)
+            router.display(element: .displayErrorBanner(error))
+        }
+    }
+
+    @MainActor
+    func checkSentinel() async {
+        guard sentinelEnabled, let userId = try? userDataProvider.getUserId() else {
+            return
+        }
+        let settings = await userSettingsRepository.getSettings(for: userId)
+        isSentinelEligible = settings.highSecurity.eligible
+        isSentinelActive = settings.highSecurity.value
+    }
+
+    func toggleSentinelState() {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            defer {
+                updatingSentinel = false
+            }
             do {
-                // First get local plan to optimistically display it
-                // and then try to refresh the plan to have it updated
-                self.plan = try await self.passPlanRepository.getPlan()
-                self.plan = try await self.passPlanRepository.refreshPlan()
+                updatingSentinel = true
+                let userId = try userDataProvider.getUserId()
+                try await toggleSentinel(for: userId)
+                await checkSentinel()
             } catch {
-                self.logger.error(error)
-                self.delegate?.profileTabViewModelDidEncounter(error: error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
+    func showSentinelInformation() {
+        router.navigate(to: .urlPage(urlString: "https://proton.me/support/proton-sentinel"))
+    }
+
     func editLocalAuthenticationMethod() {
-        securitySettingsCoordinator.editMethod()
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            securitySettingsCoordinator.editMethod()
+        }
     }
 
     func editAppLockTime() {
-        securitySettingsCoordinator.editAppLockTime()
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            securitySettingsCoordinator.editAppLockTime()
+        }
     }
 
     func editPINCode() {
-        securitySettingsCoordinator.editPINCode()
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            securitySettingsCoordinator.editPINCode()
+        }
+    }
+
+    func handleEnableAutoFillAction() {
+        openAutoFillSettings()
     }
 
     func showAccountMenu() {
@@ -154,20 +198,24 @@ extension ProfileTabViewModel {
         delegate?.profileTabViewModelWantsToShowSettingsMenu()
     }
 
-    func showAcknowledgments() {
-        delegate?.profileTabViewModelWantsToShowAcknowledgments()
-    }
-
     func showPrivacyPolicy() {
-        delegate?.profileTabViewModelWantsToShowPrivacyPolicy()
+        router.navigate(to: .urlPage(urlString: ProtonLink.privacyPolicy))
     }
 
     func showTermsOfService() {
-        delegate?.profileTabViewModelWantsToShowTermsOfService()
+        router.navigate(to: .urlPage(urlString: ProtonLink.termsOfService))
     }
 
     func showImportInstructions() {
-        delegate?.profileTabViewModelWantsToShowImportInstructions()
+        router.navigate(to: .urlPage(urlString: ProtonLink.howToImport))
+    }
+
+    func showImportExportFlow() {
+        router.present(for: .importExport)
+    }
+
+    func showTutorial() {
+        router.present(for: .tutorial)
     }
 
     func showFeedback() {
@@ -182,11 +230,35 @@ extension ProfileTabViewModel {
 // MARK: - Private APIs
 
 private extension ProfileTabViewModel {
+    func setUp() {
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await checkSentinel()
+        }
+
+        NotificationCenter.default
+            .publisher(for: UIApplication.willEnterForegroundNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                refresh()
+            }
+            .store(in: &cancellables)
+
+        preferences.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                updateAutoFillAvalability()
+                updateSecuritySettings()
+            }
+            .store(in: &cancellables)
+    }
+
     func refresh() {
         updateAutoFillAvalability()
         updateSecuritySettings()
-        refreshPlan()
-        refreshFeatureFlags()
     }
 
     func updateSecuritySettings() {
@@ -200,7 +272,7 @@ private extension ProfileTabViewModel {
             } catch {
                 // Fallback to `none`, not much we can do except displaying the error
                 logger.error(error)
-                delegate?.profileTabViewModelDidEncounter(error: error)
+                router.display(element: .displayErrorBanner(error))
                 localAuthenticationMethod = .none
             }
         case .pin:
@@ -219,7 +291,7 @@ private extension ProfileTabViewModel {
     func updateAutoFillAvalability() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.autoFillEnabled = await self.credentialManager.isAutoFillEnabled
+            autoFillEnabled = await credentialManager.isAutoFillEnabled
         }
     }
 
@@ -231,10 +303,10 @@ private extension ProfileTabViewModel {
         guard quickTypeBar != preferences.quickTypeBar else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.profileTabViewModelWantsToHideSpinner() }
+            defer { self.loading = false }
             do {
                 self.logger.trace("Updating credential database QuickTypeBar \(self.quickTypeBar)")
-                self.delegate?.profileTabViewModelWantsToShowSpinner()
+                self.loading = true
                 if self.quickTypeBar {
                     try await self.indexAllLoginItems(ignorePreferences: true)
                 } else {
@@ -244,7 +316,7 @@ private extension ProfileTabViewModel {
             } catch {
                 self.logger.error(error)
                 self.quickTypeBar.toggle() // rollback to previous value
-                self.delegate?.profileTabViewModelDidEncounter(error: error)
+                self.router.display(element: .displayErrorBanner(error))
             }
         }
     }

@@ -18,24 +18,20 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
-import UIComponents
+import DesignSystem
+import ProtonCoreUIFoundations
 import UIKit
 
 enum AppearanceSettings {
     static func apply() {
-        Brand.currentBrand = .pass
+        Task { @MainActor in
+            Brand.currentBrand = .pass
 
-        UIView.appearance(whenContainedInInstancesOf: [UIAlertController.self]).tintColor =
-            PassColor.interactionNorm
+            UIView.appearance(whenContainedInInstancesOf: [UIAlertController.self]).tintColor =
+                PassColor.interactionNorm
 
-        UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: PassColor.textNorm]
-        UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: PassColor.textNorm]
-
-        if #unavailable(iOS 16) {
-            // Can remove this once dropped iOS 15.
-            // Use scrollContentBackground(_:) on each TextEditor then.
-            UITextView.appearance().backgroundColor = .clear
+            UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: PassColor.textNorm]
+            UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: PassColor.textNorm]
         }
     }
 }

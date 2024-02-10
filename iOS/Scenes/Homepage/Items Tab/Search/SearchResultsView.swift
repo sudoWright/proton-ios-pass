@@ -19,12 +19,14 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
-struct SearchResultsView: View, Equatable {
+struct SearchResultsView: View {
     @ObservedObject private var viewModel: SearchResultsViewModel
     @Binding var selectedType: ItemContentType?
     @Binding var selectedSortType: SortType
@@ -83,12 +85,14 @@ struct SearchResultsView: View, Equatable {
 
     @ViewBuilder
     private func itemRow(for item: ItemSearchResult) -> some View {
+        let isEditable = viewModel.isEditable(item)
         Button(action: {
             onSelectItem(item)
         }, label: {
             ItemSearchResultView(result: item)
                 .itemContextMenu(item: item,
                                  isTrashed: viewModel.isTrash,
+                                 isEditable: isEditable,
                                  onPermanentlyDelete: { viewModel.itemToBePermanentlyDeleted = item },
                                  handler: viewModel.itemContextMenuHandler)
         })
@@ -97,27 +101,29 @@ struct SearchResultsView: View, Equatable {
         .padding(.vertical, 12)
         .modifier(ItemSwipeModifier(itemToBePermanentlyDeleted: $viewModel.itemToBePermanentlyDeleted,
                                     item: item,
+                                    isEditMode: false,
                                     isTrashed: viewModel.isTrash,
+                                    isEditable: isEditable,
                                     itemContextMenuHandler: viewModel.itemContextMenuHandler))
         .modifier(PermenentlyDeleteItemModifier(isShowingAlert: $viewModel.showingPermanentDeletionAlert,
                                                 onDelete: viewModel.permanentlyDelete))
-    }
-
-    static func == (lhs: SearchResultsView, rhs: SearchResultsView) -> Bool {
-        lhs.viewModel.results.hashValue == rhs.viewModel.results.hashValue
     }
 }
 
 private extension SearchResultsView {
     var topBarSearchInformations: some View {
-        HStack {
-            Text("\(viewModel.results.numberOfItems)")
+        let localizedString = #localized("%lld search result(s)", viewModel.results.numberOfItems)
+        var attributedString = AttributedString(localizedString)
+
+        // Apply bold to the dynamic part of the string
+        if let range = attributedString.range(of: String(viewModel.results.numberOfItems)) {
+            attributedString[range].font = .callout.bold()
+            attributedString[range].foregroundColor = PassColor.textNorm.toColor
+        }
+        return HStack {
+            Text(attributedString)
                 .font(.callout)
-                .fontWeight(.bold)
-                .foregroundColor(Color(uiColor: PassColor.textNorm)) +
-                Text(" result(s)")
-                .font(.callout)
-                .foregroundColor(Color(uiColor: PassColor.textWeak))
+                .foregroundColor(PassColor.textWeak.toColor)
 
             Spacer()
 
@@ -141,7 +147,7 @@ private extension SearchResultsView {
             }
             .listStyle(.plain)
             .animation(.default, value: viewModel.results.hashValue)
-            .gesture(DragGesture().onChanged { _ in onScroll() })
+            .simultaneousGesture(DragGesture().onChanged { _ in onScroll() })
             .onChange(of: selectedType) { _ in
                 proxy.scrollTo(uuid)
             }
@@ -173,14 +179,14 @@ private extension SearchResultsView {
 
     @ViewBuilder
     func mostRecentItemList(_ result: MostRecentSortResult<ItemSearchResult>) -> some View {
-        section(for: result.today, headerTitle: "Today")
-        section(for: result.yesterday, headerTitle: "Yesterday")
-        section(for: result.last7Days, headerTitle: "Last week")
-        section(for: result.last14Days, headerTitle: "Last two weeks")
-        section(for: result.last30Days, headerTitle: "Last 30 days")
-        section(for: result.last60Days, headerTitle: "Last 60 days")
-        section(for: result.last90Days, headerTitle: "Last 90 days")
-        section(for: result.others, headerTitle: "More than 90 days")
+        section(for: result.today, headerTitle: #localized("Today"))
+        section(for: result.yesterday, headerTitle: #localized("Yesterday"))
+        section(for: result.last7Days, headerTitle: #localized("Last week"))
+        section(for: result.last14Days, headerTitle: #localized("Last two weeks"))
+        section(for: result.last30Days, headerTitle: #localized("Last 30 days"))
+        section(for: result.last60Days, headerTitle: #localized("Last 60 days"))
+        section(for: result.last90Days, headerTitle: #localized("Last 90 days"))
+        section(for: result.others, headerTitle: #localized("More than 90 days"))
     }
 
     func alphabeticalItemList(_ result: AlphabeticalSortResult<ItemSearchResult>) -> some View {
@@ -198,7 +204,6 @@ private extension SearchResultsView {
 }
 
 private struct ItemSearchResultView: View, Equatable {
-    private let favIconRepository = resolve(\SharedRepositoryContainer.favIconRepository)
     let result: ItemSearchResult
 
     var body: some View {

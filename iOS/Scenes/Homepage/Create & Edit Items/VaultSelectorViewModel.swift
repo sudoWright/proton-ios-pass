@@ -19,51 +19,60 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import Combine
 import Core
+import Entities
 import Factory
 
-protocol VaultSelectorViewModelDelegate: AnyObject {
-    func vaultSelectorViewModelWantsToUpgrade()
-    func vaultSelectorViewModelDidSelect(vault: Vault)
-    func vaultSelectorViewModelDidEncounter(error: Error)
-}
-
+@MainActor
 final class VaultSelectorViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private let upgradeChecker = resolve(\SharedServiceContainer.upgradeChecker)
     private let logger = resolve(\SharedToolingContainer.logger)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let getMainVault = resolve(\SharedUseCasesContainer.getMainVault)
+    private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
+
     let allVaults: [VaultListUiModel]
 
-    @Published private(set) var selectedVault: Vault
+    @Published private(set) var selectedVault: Vault?
     @Published private(set) var isFreeUser = false
 
-    weak var delegate: VaultSelectorViewModelDelegate?
+    init() {
+        allVaults = vaultsManager.getAllEditableVaultContents().map { .init(vaultContent: $0) }
+        selectedVault = vaultsManager.vaultSelection.preciseVault
 
-    init(allVaults: [VaultListUiModel], selectedVault: Vault) {
-        self.allVaults = allVaults
-        self.selectedVault = selectedVault
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard self.allVaults.count > 1 else { return }
-            do {
-                self.isFreeUser = try await self.upgradeChecker.isFreeUser()
-                if self.isFreeUser, let primaryVault = self.allVaults.first(where: { $0.vault.isPrimary }) {
-                    self.selectedVault = primaryVault.vault
-                }
-            } catch {
-                self.logger.error(error)
-                self.delegate?.vaultSelectorViewModelDidEncounter(error: error)
-            }
-        }
+        setup()
     }
 
-    func select(vault: Vault) {
-        delegate?.vaultSelectorViewModelDidSelect(vault: vault)
+    nonisolated func select(vault: Vault) {
+        vaultsManager.select(.precise(vault))
+    }
+
+    func isSelected(vault: Vault) -> Bool {
+        vault.shareId == selectedVault?.shareId
     }
 
     func upgrade() {
-        delegate?.vaultSelectorViewModelWantsToUpgrade()
+        router.present(for: .upgradeFlow)
+    }
+}
+
+private extension VaultSelectorViewModel {
+    func setup() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard allVaults.count > 1 else { return }
+            do {
+                isFreeUser = try await upgradeChecker.isFreeUser()
+                if isFreeUser, let mainVault = await getMainVault() {
+                    selectedVault = mainVault
+                }
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
     }
 }

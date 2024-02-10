@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import PhotosUI
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct BugReportView: View {
     @Environment(\.dismiss) private var dismiss
@@ -29,6 +31,7 @@ struct BugReportView: View {
     @StateObject private var viewModel = BugReportViewModel()
     var onError: (Error) -> Void
     var onSuccess: () -> Void
+    @State var isShowing = false
 
     init(onError: @escaping (Error) -> Void,
          onSuccess: @escaping () -> Void) {
@@ -42,15 +45,9 @@ struct BugReportView: View {
                 .toolbar { toolbarContent }
                 .navigationTitle("Report a problem")
                 .navigationBarTitleDisplayMode(.inline)
-                .showSpinner(viewModel.isSending)
+                .showSpinner(viewModel.actionInProcess)
                 .onFirstAppear {
-                    if #available(iOS 16, *) {
-                        focused = true
-                    } else {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                            focused = true
-                        }
-                    }
+                    focused = true
                 }
         }
         .navigationViewStyle(.stack)
@@ -95,13 +92,18 @@ private extension BugReportView {
             VStack {
                 objectSection
                 descriptionSection
+
                 includeLogsSection
+                includeFileSection
+                if !viewModel.currentFiles.isEmpty {
+                    selectedFiles
+                }
+
                 Spacer()
             }
             .padding()
             .frame(maxHeight: .infinity)
         }
-        .accentColor(PassColor.interactionNorm.toColor) // Remove when dropping iOS 15
         .tint(PassColor.interactionNorm.toColor)
         .background(PassColor.backgroundNorm.toColor)
     }
@@ -134,7 +136,7 @@ private extension BugReportView {
             .contentShape(Rectangle())
             .frame(maxWidth: .infinity, alignment: .leading)
         })
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
     }
 }
@@ -142,12 +144,12 @@ private extension BugReportView {
 private extension BugReportView {
     @ViewBuilder
     var descriptionSection: some View {
-        let title = "What went wrong?"
+        let title = #localized("What went wrong?")
         let placeholder =
             // swiftlint:disable:next line_length
-            "Please describe the problem in as much detail as you can. If there was an error message, let us know what it said."
-        HStack(spacing: kItemDetailSectionPadding) {
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            #localized("Please describe the problem in as much detail as you can. If there was an error message, let us know what it said.")
+        HStack(spacing: DesignConstant.sectionPadding) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text(title)
                     .font(.footnote)
                     .foregroundColor(PassColor.textNorm.toColor)
@@ -174,7 +176,7 @@ private extension BugReportView {
                 focused = true
             }
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedEditableSection()
     }
 }
@@ -182,13 +184,86 @@ private extension BugReportView {
 private extension BugReportView {
     var includeLogsSection: some View {
         VStack {
-            Toggle("Send error logs", isOn: $viewModel.shouldSendLogs)
+            Toggle("Send logs", isOn: $viewModel.shouldSendLogs)
                 .foregroundColor(PassColor.textNorm.toColor)
-                .padding(kItemDetailSectionPadding)
+                .padding(DesignConstant.sectionPadding)
                 .roundedEditableSection()
             // swiftlint:disable:next line_length
             Text("A log is a type of file that shows us the actions you took that led to an error. We'll only ever use them to help our engineers fix bugs.")
                 .sectionTitleText()
         }
+    }
+}
+
+private extension BugReportView {
+    var includeFileSection: some View {
+        VStack {
+            HStack {
+                CapsuleTextButton(title: #localized("Add a File"),
+                                  titleColor: PassColor.textInvert,
+                                  backgroundColor: PassColor.interactionNorm,
+                                  action: { isShowing.toggle() })
+                    .fileImporter(isPresented: $isShowing,
+                                  allowedContentTypes: [.item],
+                                  allowsMultipleSelection: true) { results in
+                        viewModel.addFiles(files: results)
+                    }
+
+                PhotosPicker("Select Content",
+                             selection: $viewModel.selectedContent,
+                             maxSelectionCount: 2,
+                             photoLibrary: .shared())
+                    .font(.callout)
+                    .foregroundColor(PassColor.textInvert.toColor)
+                    .frame(height: 40)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .background(PassColor.interactionNorm.toColor)
+                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
+            }
+            .foregroundColor(PassColor.textNorm.toColor)
+            .padding(DesignConstant.sectionPadding)
+            .roundedEditableSection()
+
+            Text("Add relevant files or images to the report")
+                .sectionTitleText()
+        }
+    }
+}
+
+private extension BugReportView {
+    var selectedFiles: some View {
+        VStack(alignment: .leading) {
+            Text("Added files")
+                .font(.callout.weight(.bold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, DesignConstant.sectionPadding)
+
+            VStack(alignment: .leading) {
+                FlowLayout(mode: .scrollable,
+                           items: Array(viewModel.currentFiles.keys),
+                           viewMapping: { element in
+                               HStack(alignment: .center, spacing: 10) {
+                                   Text(element)
+                                       .lineLimit(1)
+                               }
+                               .font(.callout)
+                               .foregroundColor(PassColor.textNorm.toColor)
+                               .padding(.horizontal, 10)
+                               .padding(.vertical, 8)
+                               .background(PassColor.interactionNormMinor1.toColor)
+                               .cornerRadius(9)
+                               .contentShape(Rectangle())
+                           })
+            }
+
+            CapsuleTextButton(title: #localized("Clear all files"),
+                              titleColor: PassColor.textInvert,
+                              backgroundColor: PassColor.interactionNorm,
+                              action: { viewModel.clearAllAddedFiles() })
+        }
+        .foregroundColor(PassColor.textNorm.toColor)
+        .frame(maxHeight: .infinity)
     }
 }

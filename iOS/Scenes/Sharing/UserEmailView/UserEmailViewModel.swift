@@ -20,51 +20,148 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 //
 
+import Client
 import Combine
+import Core
+import Entities
 import Factory
 import Foundation
-import ProtonCore_HumanVerification
+import Macro
+import ProtonCoreHumanVerification
+
+enum RecommendationsState: Equatable {
+    case loading
+    case loaded(InviteRecommendations?)
+
+    var recommendations: InviteRecommendations? {
+        if case let .loaded(data) = self {
+            return data
+        }
+
+        return nil
+    }
+}
 
 @MainActor
 final class UserEmailViewModel: ObservableObject, Sendable {
     @Published var email = ""
+    @Published var selectedEmails: [String] = []
+    @Published var highlightedEmail: String?
     @Published private(set) var canContinue = false
     @Published var goToNextStep = false
-    @Published private(set) var vaultName = ""
-    @Published private(set) var error: String?
+    @Published private(set) var vault: SharingVaultData?
+    @Published private(set) var recommendationsState: RecommendationsState = .loaded(nil)
     @Published private(set) var isChecking = false
+    @Published private(set) var isFetchingMore = false
 
     private var cancellables = Set<AnyCancellable>()
-    private let setShareInviteUserEmailAndKeys = resolve(\UseCasesContainer.setShareInviteUserEmailAndKeys)
-    private let getShareInviteInfos = resolve(\UseCasesContainer.getCurrentShareInviteInformations)
-    private let getEmailPublicKey = resolve(\UseCasesContainer.getEmailPublicKey)
-    private var checkTask: Task<Void, Never>?
+    private let shareInviteRepository = resolve(\SharedRepositoryContainer.shareInviteRepository)
+    private let shareInviteService = resolve(\ServiceContainer.shareInviteService)
+    private let setShareInvitesUserEmailsAndKeys = resolve(\UseCasesContainer.setShareInvitesUserEmailsAndKeys)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private var currentTask: Task<Void, Never>?
+    private var canFetchMoreEmails = true
 
     init() {
         setUp()
+        updateRecommendations(removingCurrentRecommendations: true)
     }
 
-    func saveEmail() {
-        checkTask?.cancel()
-        checkTask = Task { [weak self] in
+    func highlightLastEmail() {
+        highlightedEmail = selectedEmails.last
+    }
+
+    func appendCurrentEmail() -> Bool {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else { return true }
+        guard email.isValidEmail() else {
+            router.display(element: .errorMessage(#localized("Invalid email address")))
+            return false
+        }
+        if !selectedEmails.contains(email) {
+            selectedEmails.append(email)
+        }
+        self.email = ""
+        return true
+    }
+
+    func toggleHighlight(_ email: String) {
+        if highlightedEmail == email {
+            highlightedEmail = nil
+        } else {
+            highlightedEmail = email
+        }
+    }
+
+    func deselect(_ email: String) {
+        selectedEmails.removeAll(where: { $0 == email })
+    }
+
+    func `continue`() {
+        Task { [weak self] in
             guard let self else {
                 return
             }
             defer {
-                self.isChecking = false
-                self.checkTask?.cancel()
-                self.checkTask = nil
+                isChecking = false
+            }
+            do {
+                isChecking = true
+                guard appendCurrentEmail() else { return }
+                try await setShareInvitesUserEmailsAndKeys(with: selectedEmails)
+                highlightedEmail = nil
+                goToNextStep = true
+            } catch {
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+
+    func customizeVault() {
+        if case let .new(vault, itemContent) = vault {
+            router.present(for: .customizeNewVault(vault, itemContent))
+        }
+    }
+
+    func resetShareInviteInformation() {
+        shareInviteService.resetShareInviteInformations()
+    }
+
+    func updateRecommendations(removingCurrentRecommendations: Bool) {
+        guard canFetchMoreEmails else { return }
+        currentTask?.cancel()
+        currentTask = nil
+        currentTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                currentTask = nil
+                isFetchingMore = false
             }
             do {
                 if Task.isCancelled {
                     return
                 }
-                self.isChecking = true
-                let receiverPublicKeys = try await self.getEmailPublicKey(with: email)
-                self.setShareInviteUserEmailAndKeys(with: email, and: receiverPublicKeys)
-                self.goToNextStep = true
+                guard let shareId = vault?.shareId else { return }
+                isFetchingMore = true
+                if removingCurrentRecommendations {
+                    recommendationsState = .loading
+                }
+                let currentRecommendations = recommendationsState.recommendations
+                let query = InviteRecommendationsQuery(lastToken: currentRecommendations?
+                    .planRecommendedEmailsNextToken,
+                    pageSize: Constants.Utils.defaultPageSize,
+                    email: email)
+                let recommendations = try await shareInviteRepository
+                    .getInviteRecommendations(shareId: shareId, query: query)
+                canFetchMoreEmails = recommendations.planRecommendedEmailsNextToken != nil
+                if let currentRecommendations, !removingCurrentRecommendations {
+                    recommendationsState = .loaded(currentRecommendations.merging(with: recommendations))
+                } else {
+                    recommendationsState = .loaded(recommendations)
+                }
             } catch {
-                self.error = "You cannot share \(vaultName) vault with this email"
+                recommendationsState = .loaded(nil)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
@@ -72,19 +169,35 @@ final class UserEmailViewModel: ObservableObject, Sendable {
 
 private extension UserEmailViewModel {
     func setUp() {
-        vaultName = getShareInviteInfos().vault?.name ?? ""
-        assert(getShareInviteInfos().vault != nil, "Vault is not set")
-
         $email
+            .dropFirst() // Ignore first event when the view model is initialized
             .removeDuplicates()
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .debounce(for: 0.4, scheduler: DispatchQueue.main)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] newValue in
-                if self?.error != nil {
-                    self?.error = nil
-                }
-                self?.canContinue = newValue.isValidEmail()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                canFetchMoreEmails = true
+                updateRecommendations(removingCurrentRecommendations: true)
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest($email, $selectedEmails)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] email, selectedEmails in
+                guard let self else { return }
+                highlightedEmail = nil
+                canContinue = !email.isEmpty || !selectedEmails.isEmpty
+            }
+            .store(in: &cancellables)
+
+        shareInviteService.currentSelectedVault
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                vault = shareInviteService.currentSelectedVault.value
+            }
+            .store(in: &cancellables)
+
+        vault = shareInviteService.currentSelectedVault.value
     }
 }

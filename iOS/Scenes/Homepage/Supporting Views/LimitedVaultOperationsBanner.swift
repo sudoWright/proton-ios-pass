@@ -18,8 +18,8 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
+import DesignSystem
 import SwiftUI
-import UIComponents
 
 struct LimitedVaultOperationsBanner: View {
     let onUpgrade: () -> Void
@@ -28,15 +28,16 @@ struct LimitedVaultOperationsBanner: View {
         texts
             .padding()
             .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
             .background(Color(uiColor: PassColor.interactionNormMinor1))
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .onTapGesture(perform: onUpgrade)
     }
 
     private var texts: some View {
-        Text("To interact with other vaults, you need to upgrade your account.")
+        Text("To interact with your other vaults, you need to upgrade your account.")
             .foregroundColor(Color(uiColor: PassColor.textNorm)) +
-            Text(" ") +
+            Text(verbatim: " ") +
             Text("Upgrade now")
             .underline(color: Color(uiColor: PassColor.interactionNormMajor1))
             .foregroundColor(Color(uiColor: PassColor.interactionNormMajor1))

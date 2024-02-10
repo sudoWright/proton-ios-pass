@@ -19,51 +19,95 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+
+import Combine
 import Core
+import Entities
 import Factory
+import Macro
 
-protocol MoveVaultListViewModelDelegate: AnyObject {
-    func moveVaultListViewModelWantsToUpgrade()
-    func moveVaultListViewModelDidPick(vault: Vault)
-    func moveVaultListViewModelDidEncounter(error: Error)
-}
-
+@MainActor
 final class MoveVaultListViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private let upgradeChecker = resolve(\SharedServiceContainer.upgradeChecker)
     private let logger = resolve(\SharedToolingContainer.logger)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
+    private let moveItemsBetweenVaults = resolve(\UseCasesContainer.moveItemsBetweenVaults)
+    private let getVaultContentForVault = resolve(\UseCasesContainer.getVaultContentForVault)
+    private let currentSelectedItems = resolve(\DataStreamContainer.currentSelectedItems)
 
     @Published private(set) var isFreeUser = false
-    @Published var selectedVault: VaultListUiModel
+    @Published var selectedVault: VaultContentUiModel?
 
-    weak var delegate: MoveVaultListViewModelDelegate?
+    let allVaults: [VaultContentUiModel]
+    private let context: MovingContext
 
-    let allVaults: [VaultListUiModel]
-    let currentVault: VaultListUiModel
-
-    init(allVaults: [VaultListUiModel], currentVault: VaultListUiModel) {
+    init(allVaults: [VaultContentUiModel], context: MovingContext) {
         self.allVaults = allVaults
-        self.currentVault = currentVault
-        selectedVault = currentVault
+        self.context = context
+        let fromShareId: String? = switch context {
+        case let .singleItem(item):
+            item.shareId
+        case let .allItems(vault):
+            vault.shareId
+        case .selectedItems:
+            nil
+        }
+
+        if let fromShareId {
+            selectedVault = getVaultContentForVault(for: fromShareId)
+        }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                self.isFreeUser = try await self.upgradeChecker.isFreeUser()
+                isFreeUser = try await upgradeChecker.isFreeUser()
             } catch {
-                self.logger.error(error)
-                self.delegate?.moveVaultListViewModelDidEncounter(error: error)
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
             }
         }
     }
 
-    func confirm() {
-        guard selectedVault != currentVault else { return }
-        delegate?.moveVaultListViewModelDidPick(vault: selectedVault.vault)
+    func upgrade() {
+        router.present(for: .upgradeFlow)
     }
 
-    func upgrade() {
-        delegate?.moveVaultListViewModelWantsToUpgrade()
+    func doMove() {
+        guard let selectedVault else {
+            assertionFailure("Should have a selected vault")
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                router.display(element: .globalLoading(shouldShow: true))
+                try await moveItemsBetweenVaults(context: context,
+                                                 to: selectedVault.vault.shareId)
+                router.display(element: successMessage(toVaultName: selectedVault.vault.name))
+                currentSelectedItems.send([])
+            } catch {
+                logger.error(error)
+                router.display(element: .displayErrorBanner(error))
+            }
+        }
+    }
+}
+
+private extension MoveVaultListViewModel {
+    func successMessage(toVaultName: String) -> UIElementDisplay {
+        switch context {
+        case let .singleItem(item):
+            let message = #localized("Item moved to vault « %@ »", toVaultName)
+            return .successMessage(message, config: .dismissAndRefresh(with: .update(item.type)))
+        case let .allItems(fromVault):
+            let message = #localized("Items from « %@ » moved to vault « %@ »", fromVault.name, toVaultName)
+            return .successMessage(message, config: .dismissAndRefresh)
+        case let .selectedItems(items):
+            let message = #localized("%lld items moved to vault « %@ »", items.count, toVaultName)
+            return .successMessage(message, config: .dismissAndRefresh)
+        }
     }
 }

@@ -19,9 +19,9 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct AliasDetailView: View {
     @StateObject private var viewModel: AliasDetailViewModel
@@ -48,7 +48,9 @@ struct AliasDetailView: View {
         ScrollViewReader { value in
             ScrollView {
                 VStack(spacing: 0) {
-                    ItemDetailTitleView(itemContent: viewModel.itemContent, vault: viewModel.vault)
+                    ItemDetailTitleView(itemContent: viewModel.itemContent,
+                                        vault: viewModel.vault?.vault,
+                                        shouldShowVault: viewModel.shouldShowVault)
                         .padding(.bottom, 40)
 
                     aliasMailboxesSection
@@ -56,8 +58,12 @@ struct AliasDetailView: View {
 
                     if !viewModel.itemContent.note.isEmpty {
                         NoteDetailSection(itemContent: viewModel.itemContent,
-                                          vault: viewModel.vault)
+                                          vault: viewModel.vault?.vault)
                     }
+
+                    ItemDetailHistorySection(itemContent: viewModel.itemContent,
+                                             itemHistoryEnable: viewModel.itemHistoryEnabled,
+                                             action: { viewModel.showItemHistory() })
 
                     ItemDetailMoreInfoSection(isExpanded: $viewModel.moreInfoSectionExpanded,
                                               itemContent: viewModel.itemContent)
@@ -76,21 +82,21 @@ struct AliasDetailView: View {
     }
 
     private var aliasMailboxesSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
+        VStack(spacing: DesignConstant.sectionPadding) {
             aliasRow
             PassSectionDivider()
             mailboxesRow
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedDetailSection()
         .animation(.default, value: viewModel.mailboxes)
     }
 
     private var aliasRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.user, color: iconTintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Alias address")
                     .sectionTitleText()
 
@@ -99,16 +105,16 @@ struct AliasDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyAliasEmail)
+            .onTapGesture { viewModel.copyAliasEmail() }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
-            Button(action: viewModel.copyAliasEmail) {
+            Button { viewModel.copyAliasEmail() } label: {
                 Text("Copy")
             }
 
             Button(action: {
-                viewModel.showLarge(viewModel.aliasEmail)
+                viewModel.showLarge(.text(viewModel.aliasEmail))
             }, label: {
                 Text("Show large")
             })
@@ -117,7 +123,7 @@ struct AliasDetailView: View {
 
     @ViewBuilder
     private var mailboxesRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.forward, color: iconTintColor)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -138,7 +144,7 @@ struct AliasDetailView: View {
                                 })
 
                                 Button(action: {
-                                    viewModel.showLarge(mailbox.email)
+                                    viewModel.showLarge(.text(mailbox.email))
                                 }, label: {
                                     Text("Show large")
                                 })
@@ -146,16 +152,17 @@ struct AliasDetailView: View {
                     }
                 } else {
                     Group {
-                        AnimatingGradient(tintColor: iconTintColor)
-                        AnimatingGradient(tintColor: iconTintColor)
-                        AnimatingGradient(tintColor: iconTintColor)
+                        SkeletonBlock(tintColor: iconTintColor)
+                        SkeletonBlock(tintColor: iconTintColor)
+                        SkeletonBlock(tintColor: iconTintColor)
                     }
                     .clipShape(Capsule())
+                    .shimmering()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .animation(.default, value: viewModel.mailboxes)
     }
 }

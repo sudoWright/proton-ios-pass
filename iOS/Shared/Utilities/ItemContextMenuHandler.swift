@@ -20,22 +20,27 @@
 
 import Client
 import Core
+import Entities
 import Factory
-import ProtonCore_UIFoundations
+import Macro
+import ProtonCoreUIFoundations
 
+@MainActor
 protocol ItemContextMenuHandlerDelegate: AnyObject {
-    func itemContextMenuHandlerWantsToShowSpinner()
-    func itemContextMenuHandlerWantsToHideSpinner()
     func itemContextMenuHandlerWantsToEditItem(_ itemContent: ItemContent)
-    func itemContextMenuHandlerDidTrash(item: ItemTypeIdentifiable)
-    func itemContextMenuHandlerDidUntrash(item: ItemTypeIdentifiable)
-    func itemContextMenuHandlerDidPermanentlyDelete(item: ItemTypeIdentifiable)
 }
 
-final class ItemContextMenuHandler {
-    private let clipboardManager = resolve(\SharedServiceContainer.clipboardManager)
+@MainActor
+final class ItemContextMenuHandler: Sendable {
+    @LazyInjected(\SharedServiceContainer.clipboardManager) private var clipboardManager
+    @LazyInjected(\SharedViewContainer.bannerManager) private var bannerManager
     private let itemRepository = resolve(\SharedRepositoryContainer.itemRepository)
     private let logger = resolve(\SharedToolingContainer.logger)
+    private let symmetricKeyProvider = resolve(\SharedDataContainer.symmetricKeyProvider)
+    private let pinItem = resolve(\SharedUseCasesContainer.pinItem)
+    private let unpinItem = resolve(\SharedUseCasesContainer.unpinItem)
+
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
 
     weak var delegate: ItemContextMenuHandlerDelegate?
 
@@ -47,128 +52,171 @@ final class ItemContextMenuHandler {
 // Only show & hide spinner when trashing because API calls are needed.
 // Other operations are local so no need.
 extension ItemContextMenuHandler {
-    func edit(_ item: ItemTypeIdentifiable) {
+    func edit(_ item: any ItemTypeIdentifiable) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let itemContent = try await self.getDecryptedItemContent(for: item)
-                self.delegate?.itemContextMenuHandlerWantsToEditItem(itemContent)
+                let itemContent = try await getDecryptedItemContent(for: item)
+                delegate?.itemContextMenuHandlerWantsToEditItem(itemContent)
             } catch {
-                self.handleError(error)
+                handleError(error)
             }
         }
     }
 
-    func trash(_ item: ItemTypeIdentifiable) {
+    func trash(_ item: any ItemTypeIdentifiable) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemContextMenuHandlerWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.delegate?.itemContextMenuHandlerWantsToShowSpinner()
-                let encryptedItem = try await self.getEncryptedItem(for: item)
-                try await self.itemRepository.trashItems([encryptedItem])
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getEncryptedItem(for: item)
+                try await itemRepository.trashItems([encryptedItem])
 
-                let undoBlock: (PMBanner) -> Void = { [weak self] banner in
-                    banner.dismiss()
-                    self?.restore(item)
+                let undoBlock: @Sendable (PMBanner) -> Void = { banner in
+                    Task { @MainActor [weak self] in
+                        guard let self else {
+                            return
+                        }
+                        banner.dismiss()
+                        restore(item)
+                    }
                 }
 
-                self.clipboardManager.bannerManager?.displayBottomInfoMessage(item.trashMessage,
-                                                                              dismissButtonTitle: "Undo",
-                                                                              onDismiss: undoBlock)
-
-                self.delegate?.itemContextMenuHandlerDidTrash(item: item)
+                bannerManager.displayBottomInfoMessage(item.trashMessage,
+                                                       dismissButtonTitle: #localized("Undo"),
+                                                       onDismiss: undoBlock)
+                router.display(element: .successMessage(config: .refresh(with: .update(item.type))))
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
             }
         }
     }
 
-    func restore(_ item: ItemTypeIdentifiable) {
+    func restore(_ item: any ItemTypeIdentifiable) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemContextMenuHandlerWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.delegate?.itemContextMenuHandlerWantsToShowSpinner()
-                let encryptedItem = try await self.getEncryptedItem(for: item)
-                try await self.itemRepository.untrashItems([encryptedItem])
-                self.clipboardManager.bannerManager?.displayBottomSuccessMessage(item.type.restoreMessage)
-                self.delegate?.itemContextMenuHandlerDidUntrash(item: item)
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getEncryptedItem(for: item)
+                try await itemRepository.untrashItems([encryptedItem])
+                bannerManager.displayBottomSuccessMessage(item.type.restoreMessage)
+                router.display(element: .successMessage(config: .refresh(with: .update(item.type))))
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
             }
         }
     }
 
-    func deletePermanently(_ item: ItemTypeIdentifiable) {
+    func deletePermanently(_ item: any ItemTypeIdentifiable) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.delegate?.itemContextMenuHandlerWantsToHideSpinner() }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
             do {
-                self.delegate?.itemContextMenuHandlerWantsToShowSpinner()
-                let encryptedItem = try await self.getEncryptedItem(for: item)
-                try await self.itemRepository.deleteItems([encryptedItem], skipTrash: false)
-                self.clipboardManager.bannerManager?.displayBottomInfoMessage(item.type.deleteMessage)
-                self.delegate?.itemContextMenuHandlerDidPermanentlyDelete(item: item)
+                router.display(element: .globalLoading(shouldShow: true))
+                let encryptedItem = try await getEncryptedItem(for: item)
+                try await itemRepository.deleteItems([encryptedItem], skipTrash: false)
+                bannerManager.displayBottomInfoMessage(item.type.deleteMessage)
+                router.display(element: .successMessage(config: .refresh(with: .delete(item.type))))
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
             }
         }
     }
 
-    func copyUsername(_ item: ItemTypeIdentifiable) {
+    func copyUsername(_ item: any ItemTypeIdentifiable) {
         guard case .login = item.type else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let itemContent = try await self.getDecryptedItemContent(for: item)
+                let itemContent = try await getDecryptedItemContent(for: item)
                 if case let .login(data) = itemContent.contentData {
-                    self.clipboardManager.copy(text: data.username,
-                                               bannerMessage: "Username copied")
-                    self.logger.info("Copied username \(item.debugInformation)")
+                    clipboardManager.copy(text: data.username,
+                                          bannerMessage: #localized("Username copied"))
+                    logger.info("Copied username \(item.debugDescription)")
                 }
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
             }
         }
     }
 
-    func copyPassword(_ item: ItemTypeIdentifiable) {
+    func copyPassword(_ item: any ItemTypeIdentifiable) {
         guard case .login = item.type else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let itemContent = try await self.getDecryptedItemContent(for: item)
+                let itemContent = try await getDecryptedItemContent(for: item)
                 if case let .login(data) = itemContent.contentData {
-                    self.clipboardManager.copy(text: data.password,
-                                               bannerMessage: "Password copied")
-                    self.logger.info("Copied Password \(item.debugInformation)")
+                    clipboardManager.copy(text: data.password,
+                                          bannerMessage: #localized("Password copied"))
+                    logger.info("Copied Password \(item.debugDescription)")
                 }
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
             }
         }
     }
 
-    func copyAlias(_ item: ItemTypeIdentifiable) {
+    func copyAlias(_ item: any ItemTypeIdentifiable) {
         guard case .alias = item.type else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let encryptedItem = try await self.getEncryptedItem(for: item)
+                let encryptedItem = try await getEncryptedItem(for: item)
                 if let aliasEmail = encryptedItem.item.aliasEmail {
-                    self.clipboardManager.copy(text: aliasEmail,
-                                               bannerMessage: "Alias address copied")
-                    self.logger.info("Copied alias address \(item.debugInformation)")
+                    clipboardManager.copy(text: aliasEmail,
+                                          bannerMessage: #localized("Alias address copied"))
+                    logger.info("Copied alias address \(item.debugDescription)")
                 }
             } catch {
-                self.logger.error(error)
-                self.handleError(error)
+                logger.error(error)
+                handleError(error)
+            }
+        }
+    }
+
+    func copyNoteContent(_ item: any ItemTypeIdentifiable) {
+        guard case .note = item.type else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let itemContent = try await getDecryptedItemContent(for: item)
+                if case .note = itemContent.contentData {
+                    clipboardManager.copy(text: itemContent.note,
+                                          bannerMessage: #localized("Note content copied"))
+                    logger.info("Copied note content \(item.debugDescription)")
+                }
+            } catch {
+                logger.error(error)
+                handleError(error)
+            }
+        }
+    }
+
+    func toggleItemPinning(_ item: any ItemTypeIdentifiable) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { router.display(element: .globalLoading(shouldShow: false)) }
+            do {
+                let encryptedItem = try await getEncryptedItem(for: item)
+                router.display(element: .globalLoading(shouldShow: true))
+                let newItemState = if encryptedItem.item.pinned {
+                    try await unpinItem(item: encryptedItem)
+                } else {
+                    try await pinItem(item: encryptedItem)
+                }
+                router.display(element: .successMessage(newItemState.item.pinMessage, config: .refresh))
+                logger.trace("Success of pin/unpin of \(encryptedItem.debugDescription)")
+            } catch {
+                logger.error(error)
+                handleError(error)
             }
         }
     }
@@ -177,21 +225,21 @@ extension ItemContextMenuHandler {
 // MARK: - Private APIs
 
 private extension ItemContextMenuHandler {
-    func getDecryptedItemContent(for item: ItemIdentifiable) async throws -> ItemContent {
-        let symmetricKey = itemRepository.symmetricKey
+    func getDecryptedItemContent(for item: any ItemIdentifiable) async throws -> ItemContent {
+        let symmetricKey = try symmetricKeyProvider.getSymmetricKey()
         let encryptedItem = try await getEncryptedItem(for: item)
         return try encryptedItem.getItemContent(symmetricKey: symmetricKey)
     }
 
-    func getEncryptedItem(for item: ItemIdentifiable) async throws -> SymmetricallyEncryptedItem {
+    func getEncryptedItem(for item: any ItemIdentifiable) async throws -> SymmetricallyEncryptedItem {
         guard let encryptedItem = try await itemRepository.getItem(shareId: item.shareId,
                                                                    itemId: item.itemId) else {
-            throw PPError.itemNotFound(shareID: item.shareId, itemID: item.itemId)
+            throw PassError.itemNotFound(item)
         }
         return encryptedItem
     }
 
     func handleError(_ error: Error) {
-        clipboardManager.bannerManager?.displayTopErrorMessage(error)
+        bannerManager.displayTopErrorMessage(error)
     }
 }

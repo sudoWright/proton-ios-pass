@@ -19,7 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Foundation
+import ProtonCoreUIFoundations
 import SwiftUI
 
 struct EditCustomFieldSections<Field: CustomFieldTypes>: View {
@@ -39,7 +42,12 @@ struct EditCustomFieldSections<Field: CustomFieldTypes>: View {
                                 contentType: contentType,
                                 uiModel: $uiModel,
                                 onEditTitle: { onEditTitle(uiModel) },
-                                onRemove: { uiModels.removeAll(where: { $0.id == uiModel.id }) })
+                                onRemove: {
+                                    // Work around a crash in later versions of iOS 17
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                        uiModels.removeAll(where: { $0.id == uiModel.id })
+                                    }
+                                })
         }
         .onChange(of: focusedCustomField) { newValue in
             focusedField.wrappedValue = .custom(newValue)
@@ -64,7 +72,7 @@ struct EditCustomFieldSections<Field: CustomFieldTypes>: View {
             .foregroundColor(Color(uiColor: contentType.normMajor2Color))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
     }
 
     private var upgradeButton: some View {
@@ -82,6 +90,6 @@ struct EditCustomFieldSections<Field: CustomFieldTypes>: View {
             .foregroundColor(Color(uiColor: contentType.normMajor2Color))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
     }
 }

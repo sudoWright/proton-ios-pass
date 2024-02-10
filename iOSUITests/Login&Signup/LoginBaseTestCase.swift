@@ -20,16 +20,16 @@
 //  along with ProtonCore.  If not, see <https://www.gnu.org/licenses/>.
 
 import fusion
-import ProtonCore_Doh
-import ProtonCore_Environment
-import ProtonCore_ObfuscatedConstants
-import ProtonCore_QuarkCommands
-import ProtonCore_TestingToolkit
+import ProtonCoreDoh
+import ProtonCoreEnvironment
+import ProtonCoreLog
+import ProtonCoreQuarkCommands
+import ProtonCoreTestingToolkitUnitTestsCore
+import ProtonCoreTestingToolkitUITestsCore
 import XCTest
 
 class LoginBaseTestCase: ProtonCoreBaseTestCase {
-    let testData = TestData()
-    var doh: DoHInterface {
+    var doh: DoH {
         if let customDomain = dynamicDomain.map({ "\($0)" }) {
             return CustomServerConfigDoH(
                 signupDomain: customDomain,
@@ -55,27 +55,11 @@ class LoginBaseTestCase: ProtonCoreBaseTestCase {
 
     let entryRobot = AppMainRobot()
     var appRobot: MainRobot!
+    lazy var quarkCommands = Quark().baseUrl(doh)
 
     override func setUp() {
-        beforeSetUp(bundleIdentifier: "me.proton.pass.ios.iOSUITests")
+        beforeSetUp(bundleIdentifier: "me.proton.pass.iOSUITests")
         super.setUp()
-    }
-
-    // MARK: - Helpers
-
-    func createAccount(_ randomUsername: String, _ randomPassword: String) {
-        let quarkCommandTimeout = 30.0
-
-        let expectQuarkCommandToFinish = expectation(description: "Quark command should finish")
-        var quarkCommandResult: Result<CreatedAccountDetails, CreateAccountError>?
-        QuarkCommands.create(account: .freeNoAddressNoKeys(username: randomUsername, password: randomPassword),
-                             currentlyUsedHostUrl: doh.getCurrentlyUsedHostUrl()) { result in
-            quarkCommandResult = result
-            expectQuarkCommandToFinish.fulfill()
-        }
-        wait(for: [expectQuarkCommandToFinish], timeout: quarkCommandTimeout)
-        if case .failure(let error) = quarkCommandResult {
-            XCTFail("Username account creation failed in test \(#function) because of \(error.userFacingMessageInQuarkCommands)")
-        }
+        PMLog.info("UI TEST runs on: " + doh.getAccountHost())
     }
 }

@@ -19,9 +19,9 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct NoteDetailView: View {
     @StateObject private var viewModel: NoteDetailViewModel
@@ -47,24 +47,24 @@ struct NoteDetailView: View {
         ScrollViewReader { value in
             ScrollView {
                 VStack(spacing: 0) {
-                    if #unavailable(iOS 16) {
-                        // iOS 15 doesn't render navigation bar without this view
-                        // no idea why it only happens to this specific note detail view
-                        // tried adding a dummy `Text` but no help.
-                        // Only `ItemDetailTitleView` works
-                        ItemDetailTitleView(itemContent: viewModel.itemContent, vault: nil)
-                            .frame(height: 0)
-                            .opacity(0)
-                    }
+                    let itemContent = viewModel.itemContent
 
-                    TextView(.constant(viewModel.name))
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .isEditable(false)
-                        .foregroundColor(PassColor.textNorm)
+                    HStack(alignment: .firstTextBaseline) {
+                        if itemContent.item.pinned {
+                            PinCircleView(tintColor: itemContent.contentData.type.normMajor1Color,
+                                          height: 24)
+                        }
+
+                        TextView(.constant(viewModel.name))
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .isEditable(false)
+                            .foregroundColor(PassColor.textNorm)
+                    }
+                    .animation(.default, value: itemContent.item.pinned)
 
                     HStack {
-                        if let vault = viewModel.vault {
+                        if let vault = viewModel.vault?.vault {
                             if !vault.shared {
                                 VaultLabel(vault: vault)
                                     .padding(.top, 4)
@@ -88,9 +88,13 @@ struct NoteDetailView: View {
                             .isEditable(false)
                     }
 
+                    ItemDetailHistorySection(itemContent: viewModel.itemContent,
+                                             itemHistoryEnable: viewModel.itemHistoryEnabled,
+                                             action: { viewModel.showItemHistory() })
+
                     ItemDetailMoreInfoSection(isExpanded: $viewModel.moreInfoSectionExpanded,
                                               itemContent: viewModel.itemContent)
-                        .padding(.top)
+                        .padding(.top, 24)
                         .id(bottomID)
                 }
                 .padding()

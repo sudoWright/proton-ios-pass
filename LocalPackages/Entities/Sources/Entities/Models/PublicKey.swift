@@ -21,7 +21,7 @@
 import Foundation
 
 /// Public key of an address
-public struct PublicKey: Decodable {
+public struct PublicKey: Decodable, Sendable, Equatable, Hashable {
     public let value: String
 
     public init(value: String) {
@@ -34,4 +34,8 @@ public struct PublicKey: Decodable {
         /// See more in Core's APIService
         case value = "publicKey"
     }
+}
+
+public struct PublicKeys: Decodable, Sendable {
+    public let keys: [PublicKey]
 }

@@ -18,9 +18,11 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import Core
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct TrialDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -36,27 +38,33 @@ struct TrialDetailView: View {
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                Text("Enjoy your free trial")
+                Text("Your welcome gift")
                     .font(.title.bold())
+                    .multilineTextAlignment(.center)
 
-                Text("For next-level password management:")
+                Text("Enjoy next-level password management")
                     .padding(.bottom)
+                    .multilineTextAlignment(.center)
 
                 VStack {
-                    perk(title: "Multiple vaults", icon: PassIcon.trialVaults)
+                    perk(title: #localized("20 vaults"), icon: PassIcon.trialVaults)
                     PassDivider()
-                    perk(title: "Integrated 2FA authenticator", icon: PassIcon.trial2FA)
+                    perk(title: #localized("Unlimited email aliases"),
+                         icon: IconProvider.alias,
+                         iconTintColor: PassColor.aliasInteractionNorm)
                     PassDivider()
-                    perk(title: "Custom fields", icon: PassIcon.trialCustomFields)
+                    perk(title: #localized("Integrated 2FA authenticator"), icon: PassIcon.trial2FA)
+                    PassDivider()
+                    perk(title: #localized("Custom fields"), icon: PassIcon.trialCustomFields)
                 }
                 .padding()
-                .background(Color(uiColor: PassColor.inputBackgroundNorm))
+                .background(PassColor.inputBackgroundNorm.toColor)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal)
                 .padding(.vertical, 32)
 
                 Button(action: onUpgrade) {
-                    Text("Upgrade to keep these features")
+                    Text("Upgrade now")
                         .font(.title3)
                         .padding(16)
                         .foregroundColor(.white)
@@ -70,7 +78,7 @@ struct TrialDetailView: View {
                     endPoint: .trailing))
                 .clipShape(Capsule())
 
-                Text("\(daysLeft) day(s) left in your trial period")
+                Text("\(daysLeft) trial day(s) left")
                     .font(.callout)
                     .padding(.top)
 
@@ -97,14 +105,17 @@ struct TrialDetailView: View {
         .navigationViewStyle(.stack)
     }
 
-    private func perk(title: String, icon: UIImage) -> some View {
+    private func perk(title: String, icon: UIImage, iconTintColor: UIColor? = nil) -> some View {
         Label(title: {
             Text(title)
+                .minimumScaleFactor(0.75)
         }, icon: {
             Image(uiImage: icon)
+                .renderingMode(iconTintColor != nil ? .template : .original)
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: 32)
+                .foregroundColor(iconTintColor?.toColor)
         })
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -19,10 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
+import DesignSystem
 import Factory
-import ProtonCore_UIFoundations
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 /// Not to be used directly but via `localAuthentication` view modifier
 struct LocalAuthenticationView: View {
@@ -53,7 +53,7 @@ struct LocalAuthenticationView: View {
                 PinAuthenticationView(viewModel: viewModel)
             }
 
-            Button(action: viewModel.logOut) {
+            Button { viewModel.logOut() } label: {
                 Image(uiImage: IconProvider.arrowOutFromRectangle)
                     .foregroundColor(PassColor.textNorm.toColor)
                     .padding()

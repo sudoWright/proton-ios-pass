@@ -20,19 +20,21 @@
 
 import Client
 import Core
+import Entities
 import Factory
 import SwiftUI
 import UIKit
 
+@MainActor
 protocol ItemDetailCoordinatorDelegate: AnyObject {
     func itemDetailCoordinatorWantsToPresent(view: any View, asSheet: Bool)
 }
 
+@MainActor
 final class ItemDetailCoordinator: DeinitPrintable {
     deinit { print(deinitMessage) }
 
     private let upgradeChecker = resolve(\SharedServiceContainer.upgradeChecker)
-    private let vaultsManager = resolve(\SharedServiceContainer.vaultsManager)
     private weak var itemDetailViewModelDelegate: ItemDetailViewModelDelegate?
     private var currentViewModel: BaseItemDetailViewModel?
 
@@ -45,23 +47,15 @@ final class ItemDetailCoordinator: DeinitPrintable {
     func showDetail(for itemContent: ItemContent, asSheet: Bool) {
         assert(delegate != nil, "delegate is not set")
 
-        // Only show vault when there're more than 1 vault
-        var vault: Vault?
-        let allVaults = vaultsManager.getAllVaults()
-        if allVaults.count > 1 {
-            vault = allVaults.first(where: { $0.shareId == itemContent.shareId })
-        }
-
-        let itemDetailPage: ItemDetailPage
-        switch itemContent.contentData {
+        let itemDetailPage: ItemDetailPage = switch itemContent.contentData {
         case .login:
-            itemDetailPage = makeLoginItemDetailPage(from: itemContent, asSheet: asSheet, vault: vault)
+            makeLoginItemDetailPage(from: itemContent, asSheet: asSheet)
         case .note:
-            itemDetailPage = makeNoteDetailPage(from: itemContent, asSheet: asSheet, vault: vault)
+            makeNoteDetailPage(from: itemContent, asSheet: asSheet)
         case .alias:
-            itemDetailPage = makeAliasItemDetailPage(from: itemContent, asSheet: asSheet, vault: vault)
+            makeAliasItemDetailPage(from: itemContent, asSheet: asSheet)
         case .creditCard:
-            itemDetailPage = makeCreditCardDetailPage(from: itemContent, asSheet: asSheet, vault: vault)
+            makeCreditCardDetailPage(from: itemContent, asSheet: asSheet)
         }
 
         itemDetailPage.viewModel.delegate = itemDetailViewModelDelegate
@@ -82,44 +76,32 @@ private extension ItemDetailCoordinator {
         let view: any View
     }
 
-    func makeLoginItemDetailPage(from itemContent: ItemContent,
-                                 asSheet: Bool,
-                                 vault: Vault?) -> ItemDetailPage {
+    func makeLoginItemDetailPage(from itemContent: ItemContent, asSheet: Bool) -> ItemDetailPage {
         let viewModel = LogInDetailViewModel(isShownAsSheet: asSheet,
                                              itemContent: itemContent,
-                                             upgradeChecker: upgradeChecker,
-                                             vault: vault)
+                                             upgradeChecker: upgradeChecker)
         viewModel.logInDetailViewModelDelegate = self
         return .init(viewModel: viewModel, view: LogInDetailView(viewModel: viewModel))
     }
 
-    func makeAliasItemDetailPage(from itemContent: ItemContent,
-                                 asSheet: Bool,
-                                 vault: Vault?) -> ItemDetailPage {
+    func makeAliasItemDetailPage(from itemContent: ItemContent, asSheet: Bool) -> ItemDetailPage {
         let viewModel = AliasDetailViewModel(isShownAsSheet: asSheet,
                                              itemContent: itemContent,
-                                             upgradeChecker: upgradeChecker,
-                                             vault: vault)
+                                             upgradeChecker: upgradeChecker)
         return .init(viewModel: viewModel, view: AliasDetailView(viewModel: viewModel))
     }
 
-    func makeNoteDetailPage(from itemContent: ItemContent,
-                            asSheet: Bool,
-                            vault: Vault?) -> ItemDetailPage {
+    func makeNoteDetailPage(from itemContent: ItemContent, asSheet: Bool) -> ItemDetailPage {
         let viewModel = NoteDetailViewModel(isShownAsSheet: asSheet,
                                             itemContent: itemContent,
-                                            upgradeChecker: upgradeChecker,
-                                            vault: vault)
+                                            upgradeChecker: upgradeChecker)
         return .init(viewModel: viewModel, view: NoteDetailView(viewModel: viewModel))
     }
 
-    func makeCreditCardDetailPage(from itemContent: ItemContent,
-                                  asSheet: Bool,
-                                  vault: Vault?) -> ItemDetailPage {
+    func makeCreditCardDetailPage(from itemContent: ItemContent, asSheet: Bool) -> ItemDetailPage {
         let viewModel = CreditCardDetailViewModel(isShownAsSheet: asSheet,
                                                   itemContent: itemContent,
-                                                  upgradeChecker: upgradeChecker,
-                                                  vault: vault)
+                                                  upgradeChecker: upgradeChecker)
         return .init(viewModel: viewModel, view: CreditCardDetailView(viewModel: viewModel))
     }
 }

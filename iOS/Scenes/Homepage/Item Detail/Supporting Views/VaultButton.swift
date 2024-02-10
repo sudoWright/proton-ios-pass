@@ -19,16 +19,17 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 struct VaultButton: View {
-    private let router = resolve(\RouterContainer.mainUIKitSwiftUIRouter)
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
     let vault: Vault
 
     var body: some View {
-        Button { router.presentSheet(for: .manageShareVault(vault, dismissBeforeShowing: false)) } label: {
+        Button { router.present(for: .manageShareVault(vault, .none)) } label: {
             HStack {
                 Label(title: {
                     Text(vault.name)
@@ -40,10 +41,10 @@ struct VaultButton: View {
                         .frame(width: 12, height: 12)
                 })
                 .foregroundColor(vault.mainColor)
-                Text("•")
+                Text(verbatim: "•")
                     .font(.body)
                     .foregroundColor(PassColor.textNorm.toColor)
-                Text("\(vault.members)")
+                Text(verbatim: "\(vault.members)")
                     .font(.footnote)
                     .foregroundColor(PassColor.textNorm.toColor)
             }

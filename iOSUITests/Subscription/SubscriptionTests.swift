@@ -21,22 +21,30 @@
 
 // swiftlint:disable prefixed_toplevel_constant
 import fusion
-import ProtonCore_TestingToolkit
+import ProtonCoreQuarkCommands
+import ProtonCoreTestingToolkitUnitTestsCore
+import ProtonCoreTestingToolkitUITestsLogin
+import ProtonCoreTestingToolkitUITestsPaymentsUI
+import StoreKitTest
 
 class SubscriptionTests: LoginBaseTestCase {
-    let welcomeRobot = WelcomeRobot()
-    let homeRobot = HomeRobot()
-    let timeout = 120.0
+    private let welcomeRobot = WelcomeRobot()
+    private let homeRobot = HomeRobot()
+    private var session: SKTestSession!
 
-    func testUpgradeAccountFromFreeToUnlimited() {
-        let randomUsername = StringUtils.randomAlphanumericString(length: 8)
-        let randomPassword = StringUtils.randomAlphanumericString(length: 8)
+    override func setUpWithError() throws {
+        session = try SKTestSession(configurationFileNamed: "Proton Pass - Password Manager")
+        session.disableDialogs = true
+        session.clearTransactions()
+    }
 
-        createAccount(randomUsername, randomPassword)
-
+    fileprivate func createUserVerifySubscription(plan: PaymentsPlan) throws {
+        let user = User(name: randomName, password: randomPassword)
+        try quarkCommands.userCreate(user: user)
+        
         SigninExternalAccountsCapability()
-            .signInWithAccount(userName: randomUsername,
-                               password: randomPassword,
+            .signInWithAccount(userName: user.name,
+                               password: user.password,
                                loginRobot: welcomeRobot.logIn(),
                                retRobot: AutoFillRobot.self)
             .notNowTap(robot: FaceIDRobot.self)
@@ -45,30 +53,19 @@ class SubscriptionTests: LoginBaseTestCase {
             .tapProfile()
             .tapAccountButton()
             .goToManageSubscription()
-            .expandPlan(plan: .unlimited)
-            .planButtonTap(plan: .unlimited)
-            .verifyPayment(robot: PaymentsUIRobot.self, password: "")
-            .verifyCurrentPlan(plan: .unlimited)
+            .expandPlan(plan: plan)
+            .planButtonTap(plan: plan)
+        
+        PaymentsUIRobot()
+            .verifyCurrentPlan(plan: plan)
             .verifyExtendButton()
     }
-}
-
-
-extension PaymentsUIRobot {
-
-    private func currentPlanCellIdentifier(name: String) -> String {
-        "CurrentPlanCell.\(name)"
+    
+    func testUpgradeAccountFromFreeToUnlimited() throws {
+        try createUserVerifySubscription(plan: .unlimited)
     }
 
-    func verifyCurrentPlan(plan: PaymentsPlan) -> PaymentsUIRobot {
-        cell(currentPlanCellIdentifier(name: plan.rawValue)).waitUntilExists().checkExists()
-        return self
-    }
-
-    @discardableResult
-    func verifyExtendButton() -> PaymentsUIRobot {
-        let extendSubscriptionText = "PaymentsUIViewController.extendSubscriptionButton"
-        button(extendSubscriptionText).waitUntilExists().checkExists()
-        return self
+    func testUpgradeAccountFromFreeToPlus() throws {
+        try createUserVerifySubscription(plan: .pass2022)
     }
 }

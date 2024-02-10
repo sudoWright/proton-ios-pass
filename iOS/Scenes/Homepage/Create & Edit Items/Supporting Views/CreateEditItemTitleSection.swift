@@ -19,9 +19,11 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
-import ProtonCore_UIFoundations
+import DesignSystem
+import Entities
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditItemTitleSection<Field: Hashable>: View {
     @Binding var title: String
@@ -62,7 +64,7 @@ struct CreateEditItemTitleSection<Field: Hashable>: View {
         Button(action: onChangeVault) {
             HStack {
                 VaultThumbnail(vault: selectedVault)
-                VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+                VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                     Text("Vault")
                         .sectionTitleText()
                     Text(selectedVault.name)
@@ -72,7 +74,7 @@ struct CreateEditItemTitleSection<Field: Hashable>: View {
 
                 ItemDetailSectionIcon(icon: IconProvider.chevronDown)
             }
-            .padding(kItemDetailSectionPadding)
+            .padding(DesignConstant.sectionPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -80,13 +82,13 @@ struct CreateEditItemTitleSection<Field: Hashable>: View {
 
     private var titleRow: some View {
         HStack {
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Title")
                     .sectionTitleText()
                 TextEditorWithPlaceholder(text: $title,
                                           focusedField: focusedField,
                                           field: field,
-                                          placeholder: "Untitled",
+                                          placeholder: #localized("Untitled"),
                                           font: .title,
                                           fontWeight: .bold,
                                           onSubmit: onSubmit)
@@ -101,7 +103,7 @@ struct CreateEditItemTitleSection<Field: Hashable>: View {
                 })
             }
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .animation(.default, value: title.isEmpty)
     }
 }

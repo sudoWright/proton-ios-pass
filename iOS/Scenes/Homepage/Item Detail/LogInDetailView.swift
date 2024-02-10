@@ -19,9 +19,10 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Core
-import ProtonCore_UIFoundations
+import DesignSystem
+import Macro
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct LogInDetailView: View {
     @StateObject private var viewModel: LogInDetailViewModel
@@ -50,7 +51,9 @@ struct LogInDetailView: View {
             ScrollViewReader { value in
                 ScrollView {
                     VStack(spacing: 0) {
-                        ItemDetailTitleView(itemContent: viewModel.itemContent, vault: viewModel.vault)
+                        ItemDetailTitleView(itemContent: viewModel.itemContent,
+                                            vault: viewModel.vault?.vault,
+                                            shouldShowVault: viewModel.shouldShowVault)
                             .padding(.bottom, 40)
 
                         usernamePassword2FaSection
@@ -62,16 +65,20 @@ struct LogInDetailView: View {
 
                         if !viewModel.itemContent.note.isEmpty {
                             NoteDetailSection(itemContent: viewModel.itemContent,
-                                              vault: viewModel.vault)
+                                              vault: viewModel.vault?.vault)
                                 .padding(.top, 8)
                         }
 
                         CustomFieldSections(itemContentType: viewModel.itemContent.type,
                                             uiModels: viewModel.customFieldUiModels,
                                             isFreeUser: viewModel.isFreeUser,
-                                            onSelectHiddenText: copyHiddenText,
-                                            onSelectTotpToken: copyTOTPToken,
-                                            onUpgrade: viewModel.upgrade)
+                                            onSelectHiddenText: { copyHiddenText($0) },
+                                            onSelectTotpToken: { copyTOTPToken($0) },
+                                            onUpgrade: { viewModel.upgrade() })
+
+                        ItemDetailHistorySection(itemContent: viewModel.itemContent,
+                                                 itemHistoryEnable: viewModel.itemHistoryEnabled,
+                                                 action: { viewModel.showItemHistory() })
 
                         ItemDetailMoreInfoSection(isExpanded: $viewModel.moreInfoSectionExpanded,
                                                   itemContent: viewModel.itemContent)
@@ -96,7 +103,7 @@ struct LogInDetailView: View {
     }
 
     private var usernamePassword2FaSection: some View {
-        VStack(spacing: kItemDetailSectionPadding) {
+        VStack(spacing: DesignConstant.sectionPadding) {
             usernameRow
             PassSectionDivider()
             passwordRow
@@ -110,38 +117,39 @@ struct LogInDetailView: View {
                 totpNotAllowedRow
 
             case .allowed:
-                switch viewModel.totpManager.state {
-                case .empty:
+                if viewModel.totpUri.isEmpty {
                     EmptyView()
-                default:
+                } else {
                     PassSectionDivider()
-                    totpAllowedRow
+                    TOTPRow(totpManager: viewModel.totpManager,
+                            tintColor: iconTintColor,
+                            onCopyTotpToken: { viewModel.copyTotpToken($0) })
                 }
             }
         }
-        .padding(.vertical, kItemDetailSectionPadding)
+        .padding(.vertical, DesignConstant.sectionPadding)
         .roundedDetailSection()
         .animation(.default, value: viewModel.totpTokenState)
     }
 
     private var usernameRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: viewModel.isAlias ? IconProvider.alias : IconProvider.user,
                                   color: iconTintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Username or email")
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text("Username or email address")
                     .sectionTitleText()
 
                 if viewModel.username.isEmpty {
-                    Text("No username")
+                    Text("Empty")
                         .placeholderText()
                 } else {
                     Text(viewModel.username)
                         .sectionContentText()
 
                     if viewModel.isAlias {
-                        Button(action: viewModel.showAliasDetail) {
+                        Button { viewModel.showAliasDetail() } label: {
                             Text("View alias")
                                 .font(.callout)
                                 .foregroundColor(Color(uiColor: viewModel.itemContent.type.normMajor2Color))
@@ -153,45 +161,51 @@ struct LogInDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyUsername)
+            .onTapGesture(perform: { viewModel.copyUsername() })
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
-            Button(action: viewModel.copyUsername) {
+            Button { viewModel.copyUsername() } label: {
                 Text("Copy")
             }
 
-            Button(action: {
-                viewModel.showLarge(viewModel.username)
-            }, label: {
+            Button {
+                viewModel.showLarge(.text(viewModel.username))
+            } label: {
                 Text("Show large")
-            })
+            }
         }
     }
 
     private var passwordRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            ItemDetailSectionIcon(icon: IconProvider.key, color: iconTintColor)
+        HStack(spacing: DesignConstant.sectionPadding) {
+            if let passwordStrength = viewModel.passwordStrength {
+                PasswordStrengthIcon(strength: passwordStrength)
+            } else {
+                ItemDetailSectionIcon(icon: IconProvider.key, color: iconTintColor)
+            }
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("Password")
-                    .sectionTitleText()
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
+                Text(viewModel.passwordStrength.sectionTitle)
+                    .font(.footnote)
+                    .foregroundColor(viewModel.passwordStrength.sectionTitleColor)
 
                 if viewModel.password.isEmpty {
-                    Text("Empty password")
+                    Text("Empty")
                         .placeholderText()
                 } else {
                     if isShowingPassword {
-                        Text(viewModel.coloredPasswordTexts)
+                        Text(viewModel.coloredPassword)
+                            .font(.body.monospaced())
                     } else {
-                        Text(String(repeating: "•", count: 20))
+                        Text(String(repeating: "•", count: 12))
                             .sectionContentText()
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyPassword)
+            .onTapGesture { viewModel.copyPassword() }
 
             Spacer()
 
@@ -204,7 +218,7 @@ struct LogInDetailView: View {
                     .animationsDisabled()
             }
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
+        .padding(.horizontal, DesignConstant.sectionPadding)
         .contextMenu {
             Button(action: {
                 withAnimation {
@@ -214,73 +228,35 @@ struct LogInDetailView: View {
                 Text(isShowingPassword ? "Conceal" : "Reveal")
             })
 
-            Button(action: viewModel.copyPassword) {
+            Button { viewModel.copyPassword() } label: {
                 Text("Copy")
             }
 
-            Button(action: viewModel.showLargePassword) {
+            Button { viewModel.showLargePassword() } label: {
                 Text("Show large")
             }
         }
     }
 
     private var totpNotAllowedRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.lock, color: iconTintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("2FA limit reached")
                     .sectionTitleText()
-                UpgradeButtonLite(action: viewModel.upgrade)
+                UpgradeButtonLite { viewModel.upgrade() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, kItemDetailSectionPadding)
-    }
-
-    private var totpAllowedRow: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
-            ItemDetailSectionIcon(icon: IconProvider.lock, color: iconTintColor)
-
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
-                Text("2FA token (TOTP)")
-                    .sectionTitleText()
-
-                switch viewModel.totpManager.state {
-                case .empty:
-                    EmptyView()
-                case .loading:
-                    ProgressView()
-                case let .valid(data):
-                    TOTPText(code: data.code)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                case .invalid:
-                    Text("Invalid TOTP URI")
-                        .font(.caption)
-                        .foregroundColor(Color(uiColor: PassColor.signalDanger))
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: viewModel.copyTotpCode)
-
-            switch viewModel.totpManager.state {
-            case let .valid(data):
-                TOTPCircularTimer(data: data.timerData)
-                    .animation(nil, value: isShowingPassword)
-            default:
-                EmptyView()
-            }
-        }
-        .padding(.horizontal, kItemDetailSectionPadding)
-        .animation(.default, value: viewModel.totpManager.state)
+        .padding(.horizontal, DesignConstant.sectionPadding)
     }
 
     private var urlsSection: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             ItemDetailSectionIcon(icon: IconProvider.earth, color: iconTintColor)
 
-            VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+            VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                 Text("Website")
                     .sectionTitleText()
 
@@ -302,7 +278,7 @@ struct LogInDetailView: View {
                             })
 
                             Button(action: {
-                                viewModel.copyToClipboard(text: url, message: "Website copied")
+                                viewModel.copyToClipboard(text: url, message: #localized("Website copied"))
                             }, label: {
                                 Text("Copy")
                             })
@@ -313,22 +289,24 @@ struct LogInDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .animation(.default, value: viewModel.urls)
         }
-        .padding(kItemDetailSectionPadding)
+        .padding(DesignConstant.sectionPadding)
         .roundedDetailSection()
     }
 
     private var viewAliasCard: some View {
         Group {
-            Text("View and edit details for this alias on the separate alias page. ")
+            Text("View and edit details for this alias on the separate alias page.")
                 .font(.callout)
-                .foregroundColor(Color(uiColor: PassColor.textNorm)) +
+                .foregroundColor(PassColor.textNorm.toColor) +
+                Text(verbatim: " ")
+                .font(.callout) +
                 Text("View")
                 .font(.callout)
-                .foregroundColor(Color(uiColor: viewModel.itemContent.type.normMajor2Color))
-                .underline(color: Color(uiColor: viewModel.itemContent.type.normMajor2Color))
+                .foregroundColor(viewModel.itemContent.type.normMajor2Color.toColor)
+                .underline(color: viewModel.itemContent.type.normMajor2Color.toColor)
         }
-        .padding(kItemDetailSectionPadding)
-        .background(Color(uiColor: PassColor.backgroundMedium))
+        .padding(DesignConstant.sectionPadding)
+        .background(PassColor.backgroundMedium.toColor)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .onTapGesture(perform: viewModel.showAliasDetail)
     }
@@ -336,11 +314,10 @@ struct LogInDetailView: View {
 
 private extension LogInDetailView {
     func copyTOTPToken(_ token: String) {
-        viewModel.copyToClipboard(text: token,
-                                  message: "Two Factor Authentication code copied")
+        viewModel.copyToClipboard(text: token, message: #localized("TOTP copied"))
     }
 
     func copyHiddenText(_ text: String) {
-        viewModel.copyToClipboard(text: text, message: "Hidden text copied")
+        viewModel.copyToClipboard(text: text, message: #localized("Hidden text copied"))
     }
 }

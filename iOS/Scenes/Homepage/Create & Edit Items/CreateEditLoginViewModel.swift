@@ -23,97 +23,70 @@ import Client
 import CodeScanner
 import Combine
 import Core
+import Entities
 import Factory
+import Macro
 import SwiftUI
 
+@MainActor
 protocol CreateEditLoginViewModelDelegate: AnyObject {
     func createEditLoginViewModelWantsToGenerateAlias(options: AliasOptions,
                                                       creationInfo: AliasCreationLiteInfo,
                                                       delegate: AliasCreationLiteInfoDelegate)
 
     func createEditLoginViewModelWantsToGeneratePassword(_ delegate: GeneratePasswordViewModelDelegate)
-    func createEditLoginViewModelWantsToOpenSettings()
 }
 
+@MainActor
 final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintable, ObservableObject {
     deinit { print(deinitMessage) }
 
     @Published private(set) var canAddOrEdit2FAURI = true
-    @Published private(set) var isAlias = false // `Username` is an alias or a custom one
     @Published var title = ""
     @Published var username = ""
     @Published var password = ""
+    @Published private(set) var passwordStrength: PasswordStrength?
+    private var originalTotpUri = ""
     @Published var totpUri = ""
+    @Published private(set) var totpUriErrorMessage = ""
     @Published var urls: [IdentifiableObject<String>] = [.init(value: "")]
     @Published var invalidURLs = [String]()
     @Published var note = ""
 
     @Published var isShowingNoCameraPermissionView = false
     @Published var isShowingCodeScanner = false
+    @Published private(set) var loading = false
+
+    private var allowedAndroidApps: [AllowedAndroidApp] = []
 
     /// Proton account email address
     let emailAddress: String
 
     private let aliasRepository = resolve(\SharedRepositoryContainer.aliasRepository)
-
-    /// The original associated alias item
-    private var aliasItem: SymmetricallyEncryptedItem?
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
 
     private var aliasOptions: AliasOptions?
-    private(set) var aliasCreationLiteInfo: AliasCreationLiteInfo?
+    @Published private var aliasCreationLiteInfo: AliasCreationLiteInfo?
+    var isAlias: Bool { aliasCreationLiteInfo != nil }
 
     weak var createEditLoginViewModelDelegate: CreateEditLoginViewModelDelegate?
 
-    private var hasNoUrls: Bool {
-        urls.isEmpty || (urls.count == 1 && urls[0].value.isEmpty)
-    }
-
-    var isAutoFilling: Bool {
-        if case let .create(_, type) = mode,
-           case let .login(_, _, autofill) = type {
-            return autofill
-        }
-        return false
-    }
-
     private let checkCameraPermission = resolve(\SharedUseCasesContainer.checkCameraPermission)
+    private let sanitizeTotpUriForEditing = resolve(\SharedUseCasesContainer.sanitizeTotpUriForEditing)
+    private let sanitizeTotpUriForSaving = resolve(\SharedUseCasesContainer.sanitizeTotpUriForSaving)
+    private let userDataProvider = resolve(\SharedDataContainer.userDataProvider)
+    private let getPasswordStrength = resolve(\SharedUseCasesContainer.getPasswordStrength)
 
-    override var isSaveable: Bool { !title.isEmpty && !hasEmptyCustomField }
+    var isSaveable: Bool { !title.isEmpty && !hasEmptyCustomField }
 
     override init(mode: ItemMode,
                   upgradeChecker: UpgradeCheckerProtocol,
                   vaults: [Vault]) throws {
-        let userData = resolve(\SharedDataContainer.userData)
-        emailAddress = userData.addresses.first?.email ?? ""
+        emailAddress = try userDataProvider.getUnwrappedUserData().addresses.first?.email ?? ""
         try super.init(mode: mode,
                        upgradeChecker: upgradeChecker,
                        vaults: vaults)
-        Publishers
-            .CombineLatest($title, $username)
-            .combineLatest($password)
-            .combineLatest($totpUri)
-            .combineLatest($urls)
-            .combineLatest($note)
-            .dropFirst(mode.isEditMode ? 1 : 3)
-            .sink(receiveValue: { [weak self] _ in
-                self?.didEditSomething = true
-            })
-            .store(in: &cancellables)
-
-        $selectedVault
-            .eraseToAnyPublisher()
-            .dropFirst()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                guard let self else { return }
-                if self.aliasOptions != nil {
-                    self.aliasOptions = nil
-                    self.aliasCreationLiteInfo = nil
-                    self.isAlias = false
-                    self.username = ""
-                }
-            }
-            .store(in: &cancellables)
+        setUp()
     }
 
     override func bindValues() {
@@ -123,37 +96,32 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
                 title = itemContent.name
                 username = data.username
                 password = data.password
-                totpUri = data.totpUri
+                originalTotpUri = data.totpUri
+                totpUri = sanitizeTotpUriForEditing(data.totpUri)
+                allowedAndroidApps = data.allowedAndroidApps
                 if !data.urls.isEmpty {
                     urls = data.urls.map { .init(value: $0) }
                 }
                 note = itemContent.note
-
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    do {
-                        self.aliasItem = try await self.itemRepository.getAliasItem(email: username)
-                        self.isAlias = self.aliasItem != nil
-                    } catch {
-                        self.logger.error(error)
-                        self.delegate?.createEditItemViewModelDidEncounter(error: error)
-                    }
-                }
             }
 
         case let .create(_, type):
-            if case let .login(title, url, _) = type {
+            if case let .login(title, url, note, _) = type {
                 self.title = title ?? ""
+                self.note = note ?? ""
                 urls = [url ?? ""].map { .init(value: $0) }
             }
 
+            // We only show upsell button when in create mode
+            // because we want to let users access their data in edit mode
+            // even when they've reached limitations
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    self.canAddOrEdit2FAURI = try await self.upgradeChecker.canHaveMoreLoginsWith2FA()
+                    canAddOrEdit2FAURI = try await upgradeChecker.canHaveMoreLoginsWith2FA()
                 } catch {
-                    self.logger.error(error)
-                    self.delegate?.createEditItemViewModelDidEncounter(error: error)
+                    logger.error(error)
+                    router.display(element: .displayErrorBanner(error))
                 }
             }
         }
@@ -163,28 +131,37 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
 
     override func saveButtonTitle() -> String {
         guard case let .create(_, type) = mode,
-              case let .login(_, _, autofill) = type,
+              case let .login(_, _, _, autofill) = type,
               autofill else {
             return super.saveButtonTitle()
         }
-        return "Create & AutoFill"
+        return #localized("Create & AutoFill")
     }
 
-    override func generateItemContent() -> ItemContentProtobuf {
-        let sanitizedUrls = urls.compactMap { URLUtils.Sanitizer.sanitize($0.value) }
-        let logInData = ItemContentData.login(.init(username: username,
-                                                    password: password,
-                                                    totpUri: totpUri,
-                                                    urls: sanitizedUrls))
-        return ItemContentProtobuf(name: title,
-                                   note: note,
-                                   itemUuid: UUID().uuidString,
-                                   data: logInData,
-                                   customFields: customFieldUiModels.map(\.customField))
+    @MainActor
+    override func generateItemContent() -> ItemContentProtobuf? {
+        do {
+            let sanitizedUrls = urls.compactMap { URLUtils.Sanitizer.sanitize($0.value) }
+            let sanitizedTotpUri = try sanitizeTotpUriForSaving(originalUri: originalTotpUri,
+                                                                editedUri: totpUri)
+            let logInData = ItemContentData.login(.init(username: username,
+                                                        password: password,
+                                                        totpUri: sanitizedTotpUri,
+                                                        urls: sanitizedUrls,
+                                                        allowedAndroidApps: allowedAndroidApps))
+            return ItemContentProtobuf(name: title,
+                                       note: note,
+                                       itemUuid: UUID().uuidString,
+                                       data: logInData,
+                                       customFields: customFieldUiModels.map(\.customField))
+        } catch {
+            totpUriErrorMessage = #localized("Invalid TOTP URI")
+            return nil
+        }
     }
 
     override func generateAliasCreationInfo() -> AliasCreationInfo? {
-        guard isAlias, let aliasCreationLiteInfo else { return nil }
+        guard let aliasCreationLiteInfo else { return nil }
 
         return .init(prefix: aliasCreationLiteInfo.prefix,
                      suffix: aliasCreationLiteInfo.suffix,
@@ -192,25 +169,32 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
     }
 
     override func generateAliasItemContent() -> ItemContentProtobuf? {
-        guard isAlias, aliasCreationLiteInfo != nil else { return nil }
+        guard isAlias else { return nil }
         return .init(name: title,
-                     note: "Alias of login item \"\(title)\"",
+                     note: #localized("Alias of login item \"%@\"", title),
                      itemUuid: UUID().uuidString,
                      data: .alias,
                      customFields: [])
     }
 
     override func additionalEdit() async throws {
-        // Remove alias item if necessary
-        if let aliasEmail = aliasItem?.item.aliasEmail, !isAlias {
-            try await itemRepository.deleteAlias(email: aliasEmail)
-        }
         // Create new alias item if applicable
-        else if let aliasCreationInfo = generateAliasCreationInfo(),
-                let aliasItemContent = generateAliasItemContent() {
+        if let aliasCreationInfo = generateAliasCreationInfo(),
+           let aliasItemContent = generateAliasItemContent() {
             try await itemRepository.createAlias(info: aliasCreationInfo,
                                                  itemContent: aliasItemContent,
                                                  shareId: selectedVault.shareId)
+        }
+    }
+
+    override func telemetryEventTypes() -> [TelemetryEventType] {
+        if originalTotpUri.isEmpty, !totpUri.isEmpty {
+            [.twoFaCreation]
+        } else if totpUri != sanitizeTotpUriForEditing(originalTotpUri) {
+            // The edited URI != the URI for editing
+            [.twoFaUpdate]
+        } else {
+            []
         }
     }
 
@@ -223,11 +207,11 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
         } else {
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer { self.loading = false }
                 do {
-                    self.delegate?.createEditItemViewModelWantsToShowLoadingHud()
+                    self.loading = true
                     let aliasOptions = try await self.aliasRepository
                         .getAliasOptions(shareId: self.selectedVault.shareId)
-                    self.delegate?.createEditItemViewModelWantsToHideLoadingHud()
                     if let firstSuffix = aliasOptions.suffixes.first,
                        let firstMailbox = aliasOptions.mailboxes.first {
                         var prefix = PrefixUtils.generatePrefix(fromTitle: title)
@@ -242,8 +226,7 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
                         self.generateAlias()
                     }
                 } catch {
-                    self.delegate?.createEditItemViewModelWantsToHideLoadingHud()
-                    self.delegate?.createEditItemViewModelDidEncounter(error: error)
+                    self.router.display(element: .displayErrorBanner(error))
                 }
             }
         }
@@ -261,21 +244,24 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
         totpUri = UIPasteboard.general.string ?? ""
     }
 
+    func pastePasswordFromClipboard() {
+        password = UIPasteboard.general.string ?? ""
+    }
+
     func openCodeScanner() {
         Task { @MainActor [weak self] in
-            guard let authorized = await self?.checkCameraPermission(),
-                  authorized else {
-                self?.isShowingNoCameraPermissionView = true
-                return
+            guard let self else { return }
+            if await checkCameraPermission() {
+                isShowingCodeScanner = true
+            } else {
+                isShowingNoCameraPermissionView = true
             }
-            self?.isShowingCodeScanner = true
         }
     }
 
     func removeAlias() {
         aliasCreationLiteInfo = nil
         username = ""
-        isAlias = false
     }
 
     func handleScanResult(_ result: Result<String, Error>, customField: CustomFieldUiModel? = nil) {
@@ -287,12 +273,12 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
                 totpUri = scanResult
             }
         case let .failure(error):
-            delegate?.createEditItemViewModelDidEncounter(error: error)
+            router.display(element: .displayErrorBanner(error))
         }
     }
 
     func openSettings() {
-        createEditLoginViewModelDelegate?.createEditLoginViewModelWantsToOpenSettings()
+        router.navigate(to: .openSettings)
     }
 
     func validateURLs() -> Bool {
@@ -304,6 +290,46 @@ final class CreateEditLoginViewModel: BaseCreateEditItemViewModel, DeinitPrintab
             return nil
         }
         return invalidURLs.isEmpty
+    }
+}
+
+// MARK: - SetUP & Utils
+
+private extension CreateEditLoginViewModel {
+    func setUp() {
+        bindValues()
+
+        $selectedVault
+            .eraseToAnyPublisher()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if aliasOptions != nil {
+                    aliasOptions = nil
+                    aliasCreationLiteInfo = nil
+                    username = ""
+                }
+            }
+            .store(in: &cancellables)
+
+        $totpUri
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                totpUriErrorMessage = ""
+            }
+            .store(in: &cancellables)
+
+        $password
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .sink { [weak self] passwordValue in
+                guard let self else { return }
+                passwordStrength = getPasswordStrength(password: passwordValue)
+            }
+            .store(in: &cancellables)
     }
 }
 
@@ -321,6 +347,5 @@ extension CreateEditLoginViewModel: AliasCreationLiteInfoDelegate {
     func aliasLiteCreationInfo(_ info: AliasCreationLiteInfo) {
         aliasCreationLiteInfo = info
         username = info.aliasAddress
-        isAlias = true
     }
 }

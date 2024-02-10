@@ -18,9 +18,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 let kSearchBarHeight: CGFloat = 48
 
@@ -46,6 +46,7 @@ struct SearchBar: View {
                         .foregroundColor(Color(uiColor: PassColor.textNorm))
                         .autocorrectionDisabled()
                         .focused(isFocused)
+                        .minimumScaleFactor(0.75)
 
                     Button(action: {
                         query = ""

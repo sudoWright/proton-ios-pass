@@ -21,7 +21,10 @@
 import Combine
 import Core
 import Factory
+import Foundation
+import Macro
 
+@MainActor
 final class SetPINCodeViewModel: ObservableObject, DeinitPrintable {
     deinit { print(deinitMessage) }
 
@@ -30,7 +33,7 @@ final class SetPINCodeViewModel: ObservableObject, DeinitPrintable {
     }
 
     enum ValidationError: Error {
-        case invalidCharacters, notMatched
+        case notMatched
     }
 
     @Published private(set) var state: SetPINCodeViewModel.State = .definition
@@ -38,9 +41,9 @@ final class SetPINCodeViewModel: ObservableObject, DeinitPrintable {
     @Published var definedPIN = ""
     @Published var confirmedPIN = ""
 
+    private let router = resolve(\SharedRouterContainer.mainUIKitSwiftUIRouter)
     private let preferences = resolve(\SharedToolingContainer.preferences)
     private var cancellables = Set<AnyCancellable>()
-    var onSet: (String) -> Void
 
     var theme: Theme { preferences.theme }
 
@@ -55,15 +58,14 @@ final class SetPINCodeViewModel: ObservableObject, DeinitPrintable {
         }
     }
 
-    init(onSet: @escaping (String) -> Void) {
-        self.onSet = onSet
-
+    init() {
         // Remove error as soon as users edit something
         Publishers
             .CombineLatest($definedPIN, $confirmedPIN)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.error = nil
+                guard let self else { return }
+                error = nil
             }
             .store(in: &cancellables)
     }
@@ -73,21 +75,16 @@ extension SetPINCodeViewModel {
     func action() {
         switch state {
         case .definition:
-            if definedPIN.isValid(allowedCharacters: .decimalDigits) {
-                state = .confirmation
-            } else {
-                error = .invalidCharacters
-            }
+            state = .confirmation
 
         case .confirmation:
-            if confirmedPIN.isValid(allowedCharacters: .decimalDigits) {
-                if confirmedPIN == definedPIN {
-                    onSet(definedPIN)
-                } else {
-                    error = .notMatched
-                }
+            if confirmedPIN == definedPIN {
+                preferences.localAuthenticationMethod = .pin
+                preferences.pinCode = definedPIN
+                router.display(element: .successMessage(#localized("PIN code set"),
+                                                        config: NavigationConfiguration(dismissBeforeShowing: true)))
             } else {
-                error = .invalidCharacters
+                error = .notMatched
             }
         }
     }
@@ -105,36 +102,36 @@ extension SetPINCodeViewModel.State {
     var title: String {
         switch self {
         case .definition:
-            return "Set PIN code"
+            #localized("Set PIN code")
         case .confirmation:
-            return "Repeat PIN code"
+            #localized("Repeat PIN code")
         }
     }
 
     var description: String {
         switch self {
         case .definition:
-            return "Unlock the app with this code"
+            #localized("Unlock the app with this code")
         case .confirmation:
-            return "Type your PIN again to confirm"
+            #localized("Type your PIN again to confirm")
         }
     }
 
     var placeholder: String {
         switch self {
         case .definition:
-            return "Choose a PIN code"
+            #localized("Enter PIN code")
         case .confirmation:
-            return "Repeat PIN code"
+            #localized("Repeat PIN code")
         }
     }
 
     var actionTitle: String {
         switch self {
         case .definition:
-            return "Continue"
+            #localized("Continue")
         case .confirmation:
-            return "Set PIN code"
+            #localized("Set PIN code")
         }
     }
 }
@@ -142,10 +139,8 @@ extension SetPINCodeViewModel.State {
 extension SetPINCodeViewModel.ValidationError {
     var description: String {
         switch self {
-        case .invalidCharacters:
-            return "PIN must contain only numeric characters (0-9)"
         case .notMatched:
-            return "PINs not matched"
+            #localized("PINs not matched")
         }
     }
 }

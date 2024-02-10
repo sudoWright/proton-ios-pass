@@ -21,7 +21,7 @@
 
 // swiftlint:disable prefixed_toplevel_constant
 import fusion
-import ProtonCore_CoreTranslation
+import ProtonCoreTestingToolkitUITestsCore
 import XCTest
 
 private let emptyViewText = "Create your first item\n by clicking the button below"
@@ -44,7 +44,7 @@ public final class HomeRobot: CoreElements {
         return T()
     }
 
-
+    @discardableResult
     func tapProfile() -> ProfileRobot {
         button(profileTab).waitUntilExists().tap()
         return ProfileRobot()
@@ -52,6 +52,7 @@ public final class HomeRobot: CoreElements {
 }
 
 extension Wait {
+    @MainActor
     func waitUntilExists(timeInterval: TimeInterval) {
         let testCase = XCTestCase()
         let waitExpectation = testCase.expectation(description: "Waiting")

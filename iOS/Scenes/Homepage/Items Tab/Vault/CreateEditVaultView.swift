@@ -18,9 +18,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
-import ProtonCore_UIFoundations
+import DesignSystem
+import ProtonCoreUIFoundations
 import SwiftUI
-import UIComponents
 
 struct CreateEditVaultView: View {
     @Environment(\.dismiss) private var dismiss
@@ -37,9 +37,10 @@ struct CreateEditVaultView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 colorsAndIcons
             }
+            .showSpinner(viewModel.loading)
             .animation(.default, value: viewModel.canCreateOrEdit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(kItemDetailSectionPadding)
+            .padding(DesignConstant.sectionPadding)
             .navigationBarTitleDisplayMode(.inline)
             .background(Color(uiColor: PassColor.backgroundNorm))
             .toolbar { toolbarContent }
@@ -47,11 +48,17 @@ struct CreateEditVaultView: View {
             .gesture(DragGesture().onChanged { _ in isFocusedOnTitle = false })
         }
         .navigationViewStyle(.stack)
+        .onAppear {
+            isFocusedOnTitle = true
+        }
         .onChange(of: viewModel.selectedIcon) { _ in
             isFocusedOnTitle = false
         }
         .onChange(of: viewModel.selectedColor) { _ in
             isFocusedOnTitle = false
+        }
+        .onChange(of: viewModel.finishSaving) { _ in
+            dismiss()
         }
     }
 
@@ -72,17 +79,17 @@ struct CreateEditVaultView: View {
                                             backgroundColor: PassColor.interactionNormMajor1,
                                             disableBackgroundColor: PassColor.interactionNormMinor1,
                                             disabled: viewModel.title.isEmpty,
-                                            action: viewModel.save)
+                                            action: { viewModel.save() })
             } else {
                 UpgradeButton(backgroundColor: PassColor.interactionNormMajor1,
-                              action: viewModel.upgrade)
+                              action: { viewModel.upgrade() })
             }
         }
     }
 
     private var vaultsLimitMessage: some View {
         // swiftlint:disable:next line_length
-        Text("You have reached the limit of vaults you can create. Create unlimited number of vaults when you upgrade your subscription.")
+        Text("You have reached the limit of vaults you can create. Create unlimited vaults when you upgrade your subscription.")
             .padding()
             .foregroundColor(Color(uiColor: PassColor.textNorm))
             .background(Color(uiColor: PassColor.interactionNormMinor1))
@@ -90,7 +97,7 @@ struct CreateEditVaultView: View {
     }
 
     private var previewAndTitle: some View {
-        HStack(spacing: kItemDetailSectionPadding) {
+        HStack(spacing: DesignConstant.sectionPadding) {
             let previewWidth: CGFloat = UIDevice.current.isIpad ? 60 : 40
             VStack {
                 Spacer()
@@ -108,7 +115,7 @@ struct CreateEditVaultView: View {
             }
 
             HStack {
-                VStack(alignment: .leading, spacing: kItemDetailSectionPadding / 4) {
+                VStack(alignment: .leading, spacing: DesignConstant.sectionPadding / 4) {
                     Text("Title")
                         .sectionTitleText()
                     TextField("Untitled", text: $viewModel.title)
@@ -128,7 +135,7 @@ struct CreateEditVaultView: View {
                     })
                 }
             }
-            .padding(kItemDetailSectionPadding)
+            .padding(DesignConstant.sectionPadding)
             .roundedEditableSection()
             .animation(.default, value: viewModel.title.isEmpty)
         }
@@ -216,7 +223,7 @@ private struct VaultIconView: View {
                 selectedIcon = icon
             }, label: {
                 ZStack {
-                    Color(uiColor: PassColor.inputBackgroundNorm)
+                    PassColor.inputBackgroundNorm.toColor
                     Image(uiImage: icon.bigImage)
                         .resizable()
                         .scaledToFit()

@@ -21,7 +21,9 @@
 import Client
 import Combine
 import Core
-import ProtonCore_Login
+import DocScanner
+import Entities
+import ProtonCoreLogin
 import SwiftUI
 
 final class CreateEditNoteViewModel: BaseCreateEditItemViewModel, DeinitPrintable, ObservableObject {
@@ -30,7 +32,7 @@ final class CreateEditNoteViewModel: BaseCreateEditItemViewModel, DeinitPrintabl
     @Published var title = ""
     @Published var note = ""
 
-    override var isSaveable: Bool { !title.isEmpty }
+    var isSaveable: Bool { !title.isEmpty }
 
     override init(mode: ItemMode,
                   upgradeChecker: UpgradeCheckerProtocol,
@@ -39,24 +41,38 @@ final class CreateEditNoteViewModel: BaseCreateEditItemViewModel, DeinitPrintabl
                        upgradeChecker: upgradeChecker,
                        vaults: vaults)
 
-        Publishers
-            .CombineLatest($title, $note)
-            .dropFirst(mode.isEditMode ? 1 : 3)
-            .sink(receiveValue: { [weak self] _ in
-                self?.didEditSomething = true
-            })
+        scanResponsePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { _ in } receiveValue: { [weak self] result in
+                guard let self, let result else { return }
+                if let document = result as? ScannedDocument {
+                    transformIntoNote(document: document)
+                } else {
+                    assertionFailure("Expecting ScannedDocument as result")
+                }
+            }
             .store(in: &cancellables)
     }
 
     override func bindValues() {
-        if case let .edit(itemContent) = mode,
-           case .note = itemContent.contentData {
-            title = itemContent.name
-            note = itemContent.note
+        switch mode {
+        case let .create(_, type):
+            if case let .note(title, note) = type {
+                self.title = title
+                self.note = note
+            }
+
+        case let .edit(itemContent):
+            if case .note = itemContent.contentData {
+                title = itemContent.name
+                note = itemContent.note
+            }
         }
     }
 
     override func itemContentType() -> ItemContentType { .note }
+
+    var interpretor: ScanInterpreting { ScanInterpreter() }
 
     override func generateItemContent() -> ItemContentProtobuf {
         ItemContentProtobuf(name: title,
@@ -64,5 +80,20 @@ final class CreateEditNoteViewModel: BaseCreateEditItemViewModel, DeinitPrintabl
                             itemUuid: UUID().uuidString,
                             data: ItemContentData.note,
                             customFields: [])
+    }
+}
+
+private extension CreateEditNoteViewModel {
+    func transformIntoNote(document: ScannedDocument) {
+        for (index, page) in document.scannedPages.enumerated() {
+            note += page.text.reduce(into: "") { partialResult, next in
+                partialResult = partialResult + "\n" + next
+            }
+
+            if index != document.scannedPages.count - 1 {
+                // Add an empty line between pages
+                note += "\n\n"
+            }
+        }
     }
 }

@@ -19,56 +19,82 @@
 // along with Proton Pass. If not, see https://www.gnu.org/licenses/.
 
 import Client
+import DesignSystem
+import Entities
 import Factory
 import SwiftUI
-import UIComponents
 
 enum ItemSquircleThumbnailSize {
-    case regular, large
+    case small, regular, large
 
     var height: CGFloat {
         switch self {
+        case .small:
+            24
         case .regular:
-            return 40
+            40
         case .large:
-            return 60
+            60
         }
+    }
+
+    var pinHeight: CGFloat {
+        height / 2
     }
 
     var strokeWidth: CGFloat {
         switch self {
+        case .small:
+            1
         case .regular:
-            return 2
+            2
         case .large:
-            return 3
+            3
         }
     }
 }
 
+@MainActor
 struct ItemSquircleThumbnail: View {
     @State private var image: UIImage?
 
     private let repository = resolve(\SharedRepositoryContainer.favIconRepository)
     private let data: ItemThumbnailData
+    private let pinned: Bool
     private let size: ItemSquircleThumbnailSize
+    private let alternativeBackground: Bool
 
-    init(data: ItemThumbnailData, size: ItemSquircleThumbnailSize = .regular) {
+    init(data: ItemThumbnailData,
+         pinned: Bool = false,
+         size: ItemSquircleThumbnailSize = .regular,
+         alternativeBackground: Bool = false) {
         self.data = data
+        self.pinned = pinned
         self.size = size
+        self.alternativeBackground = alternativeBackground
     }
 
     var body: some View {
+        thumbnail
+            .overlay(pinned ? pin : nil)
+            .animation(.default, value: pinned)
+    }
+}
+
+private extension ItemSquircleThumbnail {
+    @ViewBuilder
+    var thumbnail: some View {
         switch data {
         case let .icon(type):
             SquircleThumbnail(data: size == .regular ? .icon(type.regularIcon) : .icon(type.largeIcon),
                               tintColor: type.normMajor2Color,
-                              backgroundColor: type.normMinor1Color,
+                              backgroundColor: alternativeBackground ? type.normMinor2Color : type.normMinor1Color,
                               height: size.height)
 
         case let .initials(type, initials):
             SquircleThumbnail(data: .initials(initials),
                               tintColor: type.normMajor2Color,
-                              backgroundColor: type.normMinor1Color,
+                              backgroundColor: alternativeBackground ? type.normMinor2Color : type.normMinor1Color,
                               height: size.height)
 
         case let .favIcon(type, url, initials):
@@ -87,50 +113,45 @@ struct ItemSquircleThumbnail: View {
                 } else {
                     SquircleThumbnail(data: .initials(initials),
                                       tintColor: type.normMajor2Color,
-                                      backgroundColor: type.normMinor1Color,
+                                      backgroundColor: alternativeBackground ? type.normMinor2Color : type
+                                          .normMinor1Color,
                                       height: size.height)
                 }
             }
             .frame(width: size.height, height: size.height)
             .animation(.default, value: image)
-            .onChange(of: data, perform: { newValue in
-                if let newUrl = newValue.url {
-                    loadFavIcon(url: newUrl, force: true)
-                }
-            })
-            .onChange(of: repository.settings.shouldDisplayFavIcons) { newValue in
-                if newValue {
-                    if image == nil {
-                        loadFavIcon(url: url, force: false)
-                    }
-                } else {
+            .onChange(of: repository.settings.shouldDisplayFavIcons) { shouldDisplay in
+                if !shouldDisplay {
                     image = nil
                 }
             }
-            .onFirstAppear { loadFavIcon(url: url, force: false) }
+            .task {
+                do {
+                    if repository.settings.shouldDisplayFavIcons,
+                       let favIcon = try await repository.getIcon(for: url),
+                       let newImage = UIImage(data: favIcon.data) {
+                        image = newImage
+                    }
+                } catch {
+                    print(error)
+                }
+            }
         }
     }
+}
 
-    private func loadFavIcon(url: String, force: Bool) {
-        if !force, image != nil {
-            return
-        }
-
-        if force {
-            image = nil
-        }
-
-        Task {
-            do {
-                if let favIcon = try await repository.getIcon(for: url),
-                   let image = UIImage(data: favIcon.data) {
-                    await MainActor.run {
-                        self.image = image
-                    }
+private extension ItemSquircleThumbnail {
+    var pin: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Color.clear
+            PassColor.backgroundNorm.toColor
+                .frame(width: size.pinHeight, height: size.pinHeight)
+                .clipShape(Circle())
+                .overlay {
+                    PinCircleView(tintColor: data.itemContentType.normMajor1Color,
+                                  height: size.pinHeight * 4 / 5)
                 }
-            } catch {
-                print(error)
-            }
+                .padding(-size.pinHeight / 5)
         }
     }
 }
